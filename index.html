@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-<title>LinaroWorks</title>
+<title>Наряд — щоденник робіт</title>
 <link rel="manifest" href="manifest.json" />
 <meta name="theme-color" content="#16324F" />
 <link rel="apple-touch-icon" href="icons/icon-192.png" />
@@ -96,10 +96,20 @@ async function saveEntry(formData) {
   loadEntries();
 }
 
-// Живе оновлення: коли хтось інший додає запис, всі бачать його одразу
+// Живе оновлення: коли хтось інший додає або видаляє запис, всі бачать це одразу
 supabase.channel("entries-changes")
   .on("postgres_changes", { event: "INSERT", schema: "public", table: "entries" }, () => loadEntries())
+  .on("postgres_changes", { event: "DELETE", schema: "public", table: "entries" }, () => loadEntries())
   .subscribe();
+
+async function deleteEntry(id) {
+  const { error } = await supabase.from("entries").delete().eq("id", id);
+  if (error) {
+    alert("Не вдалося видалити запис: " + error.message);
+    return;
+  }
+  loadEntries();
+}
 
 // ---- Рендер ----
 function render() {
@@ -159,6 +169,7 @@ function ticketHTML(e) {
           <span style="font-style:italic;">${esc(e.author)}</span>
         </div>
       </div>
+      <button data-delete-id="${e.id}" style="margin-top:10px;width:100%;padding:7px 0;border-radius:8px;border:1px solid rgba(192,57,43,0.35);background:rgba(192,57,43,0.06);color:#C0392B;font-size:12px;">🗑 Видалити запис</button>
     </div>
   </div>`;
 }
@@ -237,6 +248,13 @@ function renderApp() {
   document.getElementById("fabBtn").onclick = () => setState({ showForm: true, formError: null });
   document.getElementById("tabToday").onclick = () => setState({ view: "today" });
   document.getElementById("tabJournal").onclick = () => setState({ view: "journal" });
+  document.querySelectorAll("[data-delete-id]").forEach(btn => {
+    btn.onclick = () => {
+      if (confirm("Точно видалити цей запис? Це не можна скасувати.")) {
+        deleteEntry(Number(btn.dataset.deleteId));
+      }
+    };
+  });
   if (state.showForm) attachFormHandlers();
 }
 
