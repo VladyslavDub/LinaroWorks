@@ -1,0 +1,338 @@
+<!DOCTYPE html>
+<html lang="uk">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>LinaroWorks</title>
+<link rel="manifest" href="manifest.json" />
+<meta name="theme-color" content="#16324F" />
+<link rel="apple-touch-icon" href="icons/icon-192.png" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="config.js"></script>
+<style>
+  body { font-family: 'IBM Plex Sans', system-ui, sans-serif; margin:0; }
+  .font-display { font-family: 'Oswald', sans-serif; }
+  .font-mono { font-family: 'IBM Plex Mono', monospace; }
+  @import url('https://fonts.googleapis.com/css2?family=Oswald:wght@500;600&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap');
+</style>
+</head>
+<body>
+<div id="root"></div>
+
+<script type="module">
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+
+const BG = "#16324F", CARD = "#F4F0E8", INK = "#1A1A18", ORANGE = "#F26430", CYAN = "#7FB3D3";
+const WORK_TYPES = ["Земляні роботи","Бетонні роботи","Мурування","Покрівля","Електрика","Сантехніка","Оздоблення","Демонтаж","Інше"];
+const WEATHER = [["sun","☀️","Сонячно"],["cloud","☁️","Хмарно"],["rain","🌧️","Дощ"],["snow","❄️","Сніг"]];
+const MONTHS = ["січня","лютого","березня","квітня","травня","червня","липня","серпня","вересня","жовтня","листопада","грудня"];
+const WEEKDAYS = ["неділя","понеділок","вівторок","середа","четвер","п'ятниця","субота"];
+
+const todayISO = () => new Date().toISOString().slice(0,10);
+const fmtLong = (iso) => { const d = new Date(iso+"T00:00:00"); return `${d.getDate()} ${MONTHS[d.getMonth()]}, ${WEEKDAYS[d.getDay()]}`; };
+const fmtShort = (iso) => { const d = new Date(iso+"T00:00:00"); return `${String(d.getDate()).padStart(2,"0")}.${String(d.getMonth()+1).padStart(2,"0")}`; };
+const esc = (s) => (s||"").replace(/[&<>"']/g, (c) => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+
+// ---- Перевірка конфігурації ----
+const configured = window.SUPABASE_URL && window.SUPABASE_URL !== "YOUR_SUPABASE_URL" &&
+                    window.SUPABASE_ANON_KEY && window.SUPABASE_ANON_KEY !== "YOUR_SUPABASE_ANON_KEY";
+
+const root = document.getElementById("root");
+
+if (!configured) {
+  root.innerHTML = `
+    <div style="background:${BG};min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px;color:#fff;text-align:center;font-family:sans-serif;">
+      <div style="max-width:360px;">
+        <h1 style="font-size:20px;margin-bottom:12px;">⚠️ Налаштування не завершено</h1>
+        <p style="font-size:14px;opacity:0.8;line-height:1.5;">
+          Файл <code>config.js</code> ще містить приклад-заповнювачі замість справжніх URL і ключа Supabase.
+          Відкрий config.js і встав свої дані з розділу Settings → API у Supabase.
+        </p>
+      </div>
+    </div>`;
+  throw new Error("Not configured");
+}
+
+const supabase = createClient(window.SUPABASE_URL, window.SUPABASE_ANON_KEY);
+
+// ---- Стан застосунку ----
+let state = {
+  loading: true,
+  name: localStorage.getItem("naryad-name") || null,
+  entries: [],
+  view: "today",
+  showForm: false,
+  saving: false,
+  error: null,
+  formError: null,
+};
+
+function setState(patch) {
+  state = { ...state, ...patch };
+  render();
+}
+
+// ---- Робота з базою даних ----
+async function loadEntries() {
+  const { data, error } = await supabase.from("entries").select("*").order("date", { ascending:false }).order("created_at", { ascending:false });
+  if (error) {
+    console.error("Supabase error:", error);
+    setState({ error: "Не вдалося завантажити записи: " + error.message, loading: false });
+    return;
+  }
+  setState({ entries: data, loading: false, error: null });
+}
+
+async function saveEntry(formData) {
+  setState({ saving: true, formError: null });
+  const { error } = await supabase.from("entries").insert([{ ...formData, author: state.name }]);
+  if (error) {
+    setState({ saving: false, formError: "Не вдалося зберегти запис. Спробуйте ще раз." });
+    return;
+  }
+  setState({ saving: false, showForm: false });
+  loadEntries();
+}
+
+// Живе оновлення: коли хтось інший додає запис, всі бачать його одразу
+supabase.channel("entries-changes")
+  .on("postgres_changes", { event: "INSERT", schema: "public", table: "entries" }, () => loadEntries())
+  .subscribe();
+
+// ---- Рендер ----
+function render() {
+  if (!state.name) return renderNameGate();
+  if (state.loading) return renderLoading();
+  renderApp();
+}
+
+function renderLoading() {
+  root.innerHTML = `<div style="background:${BG};min-height:100vh;display:flex;align-items:center;justify-content:center;">
+    <div style="color:${CYAN};font-size:14px;" class="animate-pulse">Завантаження...</div></div>`;
+}
+
+function renderNameGate() {
+  root.innerHTML = `
+    <div style="background:${BG};min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px;">
+      <div style="max-width:320px;width:100%;text-align:center;">
+        <div style="width:64px;height:64px;border-radius:9999px;margin:0 auto 20px;display:flex;align-items:center;justify-content:center;background:rgba(242,100,48,0.15);font-size:28px;">👷</div>
+        <h1 class="font-display" style="color:#fff;font-size:28px;letter-spacing:0.05em;margin-bottom:4px;">LinaroWorks</h1>
+        <p style="color:${CYAN};opacity:0.8;font-size:14px;margin-bottom:24px;">Щоденник робіт на об'єкті</p>
+        <input id="nameInput" type="text" placeholder="Ваше ім'я" style="width:100%;padding:12px 16px;border-radius:8px;background:${CARD};color:${INK};border:none;outline:none;font-size:14px;margin-bottom:12px;box-sizing:border-box;" />
+        <button id="startBtn" class="font-display" style="width:100%;padding:12px;border-radius:8px;background:${ORANGE};color:#fff;font-weight:600;letter-spacing:0.03em;border:none;font-size:14px;">ПОЧАТИ РОБОТУ</button>
+      </div>
+    </div>`;
+  const input = document.getElementById("nameInput");
+  const go = () => {
+    const v = input.value.trim();
+    if (!v) return;
+    localStorage.setItem("naryad-name", v);
+    setState({ name: v });
+    loadEntries();
+  };
+  document.getElementById("startBtn").onclick = go;
+  input.addEventListener("keydown", (e) => { if (e.key === "Enter") go(); });
+}
+
+function ticketHTML(e) {
+  const w = WEATHER.find(x => x[0] === e.weather);
+  const rot = e.id % 2 === 0 ? "-0.6deg" : "0.6deg";
+  const dots = Array.from({length:16}).map(()=>`<div style="width:10px;height:10px;border-radius:9999px;background:${BG};"></div>`).join("");
+  const chips = (e.work_types||[]).map(t => `<span style="font-size:11px;padding:2px 10px;border-radius:9999px;background:rgba(242,100,48,0.12);color:#B84B22;border:1px solid rgba(242,100,48,0.3);">${esc(t)}</span>`).join("");
+  return `
+  <div style="position:relative;margin-top:16px;transform:rotate(${rot});">
+    <div style="position:absolute;top:-5px;left:0;right:0;display:flex;justify-content:space-around;padding:0 12px;">${dots}</div>
+    <div style="background:${CARD};color:${INK};border-radius:10px;padding:16px;box-shadow:0 6px 16px rgba(0,0,0,0.25);position:relative;overflow:hidden;">
+      <div style="position:absolute;top:12px;right:-8px;padding:4px 12px;font-size:11px;font-weight:700;transform:rotate(7deg);border:1.5px solid ${ORANGE};color:${ORANGE};border-radius:4px;" class="font-mono">${fmtShort(e.date)}</div>
+      <div style="padding-right:64px;">
+        <div class="font-mono" style="font-size:11px;text-transform:uppercase;letter-spacing:0.05em;opacity:0.5;margin-bottom:2px;">Об'єкт / ділянка</div>
+        <div class="font-display" style="font-weight:600;font-size:15px;">${esc(e.site)}</div>
+      </div>
+      ${chips ? `<div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:12px;">${chips}</div>` : ""}
+      <p style="font-size:13.5px;line-height:1.6;margin-top:12px;opacity:0.9;white-space:pre-wrap;">${esc(e.description)}</p>
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-top:16px;padding-top:12px;border-top:1px solid rgba(26,26,24,0.1);">
+        <div style="font-size:12px;opacity:0.6;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">👤 ${esc(e.workers || "склад не вказано")}</div>
+        <div style="font-size:11px;opacity:0.5;display:flex;align-items:center;gap:8px;flex-shrink:0;margin-left:8px;">
+          ${w ? `<span>${w[1]}</span>` : ""}
+          <span style="font-style:italic;">${esc(e.author)}</span>
+        </div>
+      </div>
+    </div>
+  </div>`;
+}
+
+function emptyStateHTML(text) {
+  return `<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;padding:64px 24px;text-align:center;">
+    <div style="width:56px;height:56px;border-radius:9999px;background:rgba(127,179,211,0.12);display:flex;align-items:center;justify-content:center;margin-bottom:16px;font-size:24px;">👷</div>
+    <p style="color:${CYAN};opacity:0.75;font-size:14px;">${text}</p>
+  </div>`;
+}
+
+function renderApp() {
+  const todayEntries = state.entries.filter(e => e.date === todayISO());
+  const groups = {};
+  state.entries.forEach(e => { (groups[e.date] = groups[e.date] || []).push(e); });
+  const groupedDates = Object.keys(groups).sort((a,b) => a < b ? 1 : -1);
+
+  let contentHTML = "";
+  if (state.view === "today") {
+    contentHTML = todayEntries.length === 0
+      ? emptyStateHTML("Записів на сьогодні ще немає. Додайте перший запис про виконані роботи.")
+      : todayEntries.map(ticketHTML).join("");
+  } else {
+    contentHTML = groupedDates.length === 0
+      ? emptyStateHTML("Журнал поки порожній. Перший запис з'явиться тут одразу після збереження.")
+      : groupedDates.map(date => `
+        <div style="margin-top:24px;">
+          <div class="font-mono" style="font-size:12px;text-transform:uppercase;color:${CYAN};opacity:0.8;">
+            ${fmtLong(date)} <span style="opacity:0.5;">· ${groups[date].length} зап.</span>
+          </div>
+          ${groups[date].map(ticketHTML).join("")}
+        </div>`).join("");
+  }
+
+  root.innerHTML = `
+  <div style="background:${BG};min-height:100vh;background-image:linear-gradient(rgba(127,179,211,0.09) 1px, transparent 1px),linear-gradient(90deg, rgba(127,179,211,0.09) 1px, transparent 1px);background-size:26px 26px;">
+    <div style="max-width:448px;margin:0 auto;min-height:100vh;position:relative;display:flex;flex-direction:column;">
+
+      <div style="position:sticky;top:0;z-index:20;padding:24px 20px 16px;background:rgba(15,35,56,0.92);backdrop-filter:blur(6px);">
+        <div style="display:flex;align-items:center;justify-content:space-between;">
+          <div>
+            <div style="display:flex;align-items:center;gap:8px;">
+              <span>👷</span>
+              <h1 class="font-display" style="color:#fff;font-size:20px;letter-spacing:0.05em;">НАРЯД</h1>
+            </div>
+            <p class="font-mono" style="color:${CYAN};opacity:0.75;font-size:12px;margin-top:2px;">${fmtLong(todayISO())}</p>
+          </div>
+          <div style="width:36px;height:36px;border-radius:9999px;background:rgba(242,100,48,0.18);color:${ORANGE};display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:600;">
+            ${esc(state.name.slice(0,1).toUpperCase())}
+          </div>
+        </div>
+        ${state.error ? `<div style="margin-top:10px;background:#C0392B;color:#fff;font-size:12px;padding:8px 12px;border-radius:8px;">${state.error}</div>` : ""}
+      </div>
+
+      <div style="flex:1;padding:0 20px 112px;">${contentHTML}</div>
+
+      <button id="fabBtn" style="position:fixed;z-index:30;border-radius:9999px;background:${ORANGE};width:56px;height:56px;bottom:84px;left:50%;transform:translateX(calc(-50% + 184px));box-shadow:0 8px 20px rgba(0,0,0,0.35);border:none;color:#fff;font-size:26px;">+</button>
+
+      <div style="position:fixed;bottom:0;left:0;right:0;z-index:20;display:flex;justify-content:center;">
+        <div style="width:100%;max-width:448px;display:flex;background:rgba(15,35,56,0.96);border-top:1px solid rgba(127,179,211,0.15);backdrop-filter:blur(6px);">
+          <button id="tabToday" style="flex:1;display:flex;flex-direction:column;align-items:center;gap:4px;padding:12px 0;background:none;border:none;">
+            <span style="font-size:18px;opacity:${state.view==='today'?1:0.55};">📋</span>
+            <span style="font-size:11px;color:${state.view==='today'?ORANGE:CYAN};opacity:${state.view==='today'?1:0.55};">Сьогодні</span>
+          </button>
+          <button id="tabJournal" style="flex:1;display:flex;flex-direction:column;align-items:center;gap:4px;padding:12px 0;background:none;border:none;">
+            <span style="font-size:18px;opacity:${state.view==='journal'?1:0.55};">📖</span>
+            <span style="font-size:11px;color:${state.view==='journal'?ORANGE:CYAN};opacity:${state.view==='journal'?1:0.55};">Журнал</span>
+          </button>
+        </div>
+      </div>
+
+      ${state.showForm ? formHTML() : ""}
+    </div>
+  </div>`;
+
+  document.getElementById("fabBtn").onclick = () => setState({ showForm: true, formError: null });
+  document.getElementById("tabToday").onclick = () => setState({ view: "today" });
+  document.getElementById("tabJournal").onclick = () => setState({ view: "journal" });
+  if (state.showForm) attachFormHandlers();
+}
+
+let formState = { date: todayISO(), site: "", weather: "sun", workTypes: [], workers: "", description: "" };
+
+function formHTML() {
+  const weatherBtns = WEATHER.map(([key,emoji,label]) => `
+    <button data-weather="${key}" style="flex:1;padding:10px 0;border-radius:8px;border:1px solid ${formState.weather===key?ORANGE:'rgba(26,26,24,0.15)'};background:${formState.weather===key?'rgba(242,100,48,0.1)':'transparent'};display:flex;flex-direction:column;align-items:center;gap:2px;">
+      <span style="font-size:16px;">${emoji}</span><span style="font-size:10px;opacity:${formState.weather===key?1:0.6};color:${INK};">${label}</span>
+    </button>`).join("");
+
+  const typeChips = WORK_TYPES.map(t => `
+    <button data-type="${esc(t)}" style="font-size:12px;padding:4px 10px;border-radius:9999px;border:1px solid ${formState.workTypes.includes(t)?ORANGE:'rgba(26,26,24,0.15)'};background:${formState.workTypes.includes(t)?'rgba(242,100,48,0.12)':'transparent'};color:${formState.workTypes.includes(t)?'#B84B22':INK};">${esc(t)}</button>`).join("");
+
+  return `
+  <div style="position:fixed;inset:0;z-index:50;display:flex;align-items:flex-end;justify-content:center;">
+    <div id="backdrop" style="position:absolute;inset:0;background:rgba(0,0,0,0.55);"></div>
+    <div style="position:relative;width:100%;max-width:448px;border-radius:16px 16px 0 0;padding:20px;padding-bottom:32px;max-height:88vh;overflow-y:auto;background:${CARD};color:${INK};">
+      <div style="width:40px;height:4px;border-radius:9999px;background:rgba(0,0,0,0.15);margin:0 auto 16px;"></div>
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">
+        <h2 class="font-display" style="font-size:18px;font-weight:600;">НОВИЙ ЗАПИС</h2>
+        <button id="closeForm" style="background:none;border:none;font-size:18px;opacity:0.5;">✕</button>
+      </div>
+
+      <label class="font-mono" style="display:block;font-size:11px;text-transform:uppercase;opacity:0.5;margin-bottom:4px;">Дата</label>
+      <input id="fDate" type="date" value="${formState.date}" max="${todayISO()}" class="font-mono" style="width:100%;margin-bottom:16px;padding:10px 12px;border-radius:8px;border:1px solid rgba(26,26,24,0.15);font-size:14px;box-sizing:border-box;" />
+
+      <label class="font-mono" style="display:block;font-size:11px;text-transform:uppercase;opacity:0.5;margin-bottom:4px;">Об'єкт / ділянка</label>
+      <input id="fSite" type="text" value="${esc(formState.site)}" placeholder="Напр. Корпус 2, 3-й поверх" style="width:100%;margin-bottom:16px;padding:10px 12px;border-radius:8px;border:1px solid rgba(26,26,24,0.15);font-size:14px;box-sizing:border-box;" />
+
+      <label class="font-mono" style="display:block;font-size:11px;text-transform:uppercase;opacity:0.5;margin-bottom:8px;">Погода</label>
+      <div style="display:flex;gap:8px;margin-bottom:16px;">${weatherBtns}</div>
+
+      <label class="font-mono" style="display:block;font-size:11px;text-transform:uppercase;opacity:0.5;margin-bottom:8px;">Види робіт</label>
+      <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:16px;">${typeChips}</div>
+
+      <label class="font-mono" style="display:block;font-size:11px;text-transform:uppercase;opacity:0.5;margin-bottom:4px;">Склад бригади</label>
+      <input id="fWorkers" type="text" value="${esc(formState.workers)}" placeholder="Напр. Іванов, Петренко + 3 підсобники" style="width:100%;margin-bottom:16px;padding:10px 12px;border-radius:8px;border:1px solid rgba(26,26,24,0.15);font-size:14px;box-sizing:border-box;" />
+
+      <label class="font-mono" style="display:block;font-size:11px;text-transform:uppercase;opacity:0.5;margin-bottom:4px;">Що зроблено</label>
+      <textarea id="fDesc" rows="4" placeholder="Опишіть обсяги та результат робіт за день..." style="width:100%;margin-bottom:8px;padding:10px 12px;border-radius:8px;border:1px solid rgba(26,26,24,0.15);font-size:14px;box-sizing:border-box;resize:none;">${esc(formState.description)}</textarea>
+
+      ${state.formError ? `<div style="color:#C0392B;font-size:12px;margin-bottom:12px;">${state.formError}</div>` : ""}
+
+      <button id="saveBtn" class="font-display" ${state.saving ? "disabled" : ""} style="width:100%;padding:12px;border-radius:8px;background:${ORANGE};color:#fff;font-weight:600;letter-spacing:0.03em;border:none;font-size:14px;margin-top:8px;opacity:${state.saving?0.6:1};">
+        ${state.saving ? "ЗБЕРЕЖЕННЯ..." : "ЗБЕРЕГТИ ЗАПИС"}
+      </button>
+    </div>
+  </div>`;
+}
+
+function attachFormHandlers() {
+  document.getElementById("backdrop").onclick = () => setState({ showForm: false });
+  document.getElementById("closeForm").onclick = () => setState({ showForm: false });
+
+  document.getElementById("fDate").onchange = (e) => formState.date = e.target.value;
+  document.getElementById("fSite").oninput = (e) => formState.site = e.target.value;
+  document.getElementById("fWorkers").oninput = (e) => formState.workers = e.target.value;
+  document.getElementById("fDesc").oninput = (e) => formState.description = e.target.value;
+
+  document.querySelectorAll("[data-weather]").forEach(btn => {
+    btn.onclick = () => { formState.weather = btn.dataset.weather; render(); };
+  });
+  document.querySelectorAll("[data-type]").forEach(btn => {
+    btn.onclick = () => {
+      const t = btn.dataset.type;
+      formState.workTypes = formState.workTypes.includes(t) ? formState.workTypes.filter(x=>x!==t) : [...formState.workTypes, t];
+      render();
+    };
+  });
+
+  document.getElementById("saveBtn").onclick = () => {
+    if (!formState.site.trim() || !formState.description.trim()) {
+      setState({ formError: "Заповніть об'єкт і опис виконаних робіт." });
+      return;
+    }
+    saveEntry({
+      date: formState.date,
+      site: formState.site.trim(),
+      weather: formState.weather,
+      work_types: formState.workTypes,
+      workers: formState.workers.trim(),
+      description: formState.description.trim(),
+    });
+    formState = { date: todayISO(), site: "", weather: "sun", workTypes: [], workers: "", description: "" };
+  };
+}
+
+// ---- Старт ----
+render();
+if (state.name) loadEntries();
+
+// ---- Реєстрація service worker (для встановлення як застосунок) ----
+if ("serviceWorker" in navigator) {
+  window.addEventListener("load", () => navigator.serviceWorker.register("sw.js").catch(()=>{}));
+}
+</script>
+</body>
+</html>
