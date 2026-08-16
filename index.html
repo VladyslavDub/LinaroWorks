@@ -59,14 +59,20 @@ const supabase = createClient(window.SUPABASE_URL, window.SUPABASE_ANON_KEY);
 
 // ---- Стан застосунку ----
 let state = {
+  authChecked: false,
+  user: null,
+  role: null,
   loading: true,
-  name: localStorage.getItem("naryad-name") || null,
   entries: [],
+  profiles: [],
   view: "today",
   showForm: false,
   saving: false,
   error: null,
   formError: null,
+  authMode: "signin",
+  authError: null,
+  authBusy: false,
 };
 
 function setState(patch) {
@@ -74,7 +80,50 @@ function setState(patch) {
   render();
 }
 
-// ---- Робота з базою даних ----
+const isForeman = () => state.role === "бригадир";
+
+// ---- Auth ----
+async function initAuth() {
+  const { data: { session } } = await supabase.auth.getSession();
+  if (session) {
+    await loadProfile(session.user);
+  } else {
+    setState({ authChecked: true });
+  }
+  supabase.auth.onAuthStateChange((_event, session) => {
+    if (session && session.user.id !== (state.user && state.user.id)) {
+      loadProfile(session.user);
+    } else if (!session) {
+      setState({ user: null, role: null, entries: [], authChecked: true, view: "today" });
+    }
+  });
+}
+
+async function loadProfile(user) {
+  const { data } = await supabase.from("profiles").select("role,email").eq("id", user.id).single();
+  setState({ user, role: (data && data.role) || "робітник", authChecked: true });
+  loadEntries();
+}
+
+async function signIn(email, password) {
+  setState({ authBusy: true, authError: null });
+  const { error } = await supabase.auth.signInWithPassword({ email, password });
+  if (error) { setState({ authBusy: false, authError: "Невірний email або пароль." }); return; }
+  setState({ authBusy: false });
+}
+
+async function signUp(email, password) {
+  setState({ authBusy: true, authError: null });
+  const { error } = await supabase.auth.signUp({ email, password });
+  if (error) { setState({ authBusy: false, authError: error.message }); return; }
+  setState({ authBusy: false });
+}
+
+async function signOut() {
+  await supabase.auth.signOut();
+}
+
+// ---- Робота з базою даних (записи) ----
 async function loadEntries() {
   const { data, error } = await supabase.from("entries").select("*").order("date", { ascending:false }).order("created_at", { ascending:false });
   if (error) {
@@ -87,7 +136,7 @@ async function loadEntries() {
 
 async function saveEntry(formData) {
   setState({ saving: true, formError: null });
-  const { error } = await supabase.from("entries").insert([{ ...formData, author: state.name }]);
+  const { error } = await supabase.from("entries").insert([{ ...formData, author: state.user.email }]);
   if (error) {
     setState({ saving: false, formError: "Не вдалося зберегти запис. Спробуйте ще раз." });
     return;
@@ -96,24 +145,35 @@ async function saveEntry(formData) {
   loadEntries();
 }
 
-// Живе оновлення: коли хтось інший додає або видаляє запис, всі бачать це одразу
-supabase.channel("entries-changes")
-  .on("postgres_changes", { event: "INSERT", schema: "public", table: "entries" }, () => loadEntries())
-  .on("postgres_changes", { event: "DELETE", schema: "public", table: "entries" }, () => loadEntries())
-  .subscribe();
-
 async function deleteEntry(id) {
   const { error } = await supabase.from("entries").delete().eq("id", id);
-  if (error) {
-    alert("Не вдалося видалити запис: " + error.message);
-    return;
-  }
+  if (error) { alert("Не вдалося видалити запис: " + error.message); return; }
   loadEntries();
+}
+
+// Живе оновлення
+supabase.channel("entries-changes")
+  .on("postgres_changes", { event: "INSERT", schema: "public", table: "entries" }, () => { if (state.user) loadEntries(); })
+  .on("postgres_changes", { event: "DELETE", schema: "public", table: "entries" }, () => { if (state.user) loadEntries(); })
+  .subscribe();
+
+// ---- Робота з профілями (для адмін-вкладки) ----
+async function loadProfiles() {
+  const { data, error } = await supabase.from("profiles").select("*").order("email");
+  if (error) { setState({ error: "Не вдалося завантажити список людей: " + error.message }); return; }
+  setState({ profiles: data, error: null });
+}
+
+async function setRole(id, role) {
+  const { error } = await supabase.from("profiles").update({ role }).eq("id", id);
+  if (error) { alert("Не вдалося змінити роль: " + error.message); return; }
+  loadProfiles();
 }
 
 // ---- Рендер ----
 function render() {
-  if (!state.name) return renderNameGate();
+  if (!state.authChecked) return renderLoading();
+  if (!state.user) return renderAuthGate();
   if (state.loading) return renderLoading();
   renderApp();
 }
@@ -123,27 +183,41 @@ function renderLoading() {
     <div style="color:${CYAN};font-size:14px;" class="animate-pulse">Завантаження...</div></div>`;
 }
 
-function renderNameGate() {
+function renderAuthGate() {
+  const isSignIn = state.authMode === "signin";
   root.innerHTML = `
     <div style="background:${BG};min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px;">
       <div style="max-width:320px;width:100%;text-align:center;">
         <div style="width:64px;height:64px;border-radius:9999px;margin:0 auto 20px;display:flex;align-items:center;justify-content:center;background:rgba(242,100,48,0.15);font-size:28px;">👷</div>
-        <h1 class="font-display" style="color:#fff;font-size:28px;letter-spacing:0.05em;margin-bottom:4px;">LinaroWorks</h1>
+        <h1 class="font-display" style="color:#fff;font-size:28px;letter-spacing:0.05em;margin-bottom:4px;">НАРЯД</h1>
         <p style="color:${CYAN};opacity:0.8;font-size:14px;margin-bottom:24px;">Щоденник робіт на об'єкті</p>
-        <input id="nameInput" type="text" placeholder="Ваше ім'я" style="width:100%;padding:12px 16px;border-radius:8px;background:${CARD};color:${INK};border:none;outline:none;font-size:14px;margin-bottom:12px;box-sizing:border-box;" />
-        <button id="startBtn" class="font-display" style="width:100%;padding:12px;border-radius:8px;background:${ORANGE};color:#fff;font-weight:600;letter-spacing:0.03em;border:none;font-size:14px;">ПОЧАТИ РОБОТУ</button>
+
+        <input id="authEmail" type="email" placeholder="Email" style="width:100%;padding:12px 16px;border-radius:8px;background:${CARD};color:${INK};border:none;outline:none;font-size:14px;margin-bottom:10px;box-sizing:border-box;" />
+        <input id="authPass" type="password" placeholder="Пароль" style="width:100%;padding:12px 16px;border-radius:8px;background:${CARD};color:${INK};border:none;outline:none;font-size:14px;margin-bottom:12px;box-sizing:border-box;" />
+
+        ${state.authError ? `<div style="color:#ffb4b4;font-size:12px;margin-bottom:12px;">${esc(state.authError)}</div>` : ""}
+
+        <button id="authSubmit" class="font-display" ${state.authBusy?"disabled":""} style="width:100%;padding:12px;border-radius:8px;background:${ORANGE};color:#fff;font-weight:600;letter-spacing:0.03em;border:none;font-size:14px;opacity:${state.authBusy?0.6:1};">
+          ${state.authBusy ? "..." : (isSignIn ? "УВІЙТИ" : "ЗАРЕЄСТРУВАТИСЯ")}
+        </button>
+
+        <button id="authToggle" style="margin-top:14px;background:none;border:none;color:${CYAN};opacity:0.8;font-size:13px;">
+          ${isSignIn ? "Немає акаунту? Зареєструватися" : "Вже є акаунт? Увійти"}
+        </button>
       </div>
     </div>`;
-  const input = document.getElementById("nameInput");
-  const go = () => {
-    const v = input.value.trim();
-    if (!v) return;
-    localStorage.setItem("naryad-name", v);
-    setState({ name: v });
-    loadEntries();
+
+  const emailInput = document.getElementById("authEmail");
+  const passInput = document.getElementById("authPass");
+  const submit = () => {
+    const email = emailInput.value.trim();
+    const pass = passInput.value;
+    if (!email || !pass) { setState({ authError: "Заповніть email і пароль." }); return; }
+    isSignIn ? signIn(email, pass) : signUp(email, pass);
   };
-  document.getElementById("startBtn").onclick = go;
-  input.addEventListener("keydown", (e) => { if (e.key === "Enter") go(); });
+  document.getElementById("authSubmit").onclick = submit;
+  passInput.addEventListener("keydown", (e) => { if (e.key === "Enter") submit(); });
+  document.getElementById("authToggle").onclick = () => setState({ authMode: isSignIn ? "signup" : "signin", authError: null });
 }
 
 function ticketHTML(e) {
@@ -151,6 +225,7 @@ function ticketHTML(e) {
   const rot = e.id % 2 === 0 ? "-0.6deg" : "0.6deg";
   const dots = Array.from({length:16}).map(()=>`<div style="width:10px;height:10px;border-radius:9999px;background:${BG};"></div>`).join("");
   const chips = (e.work_types||[]).map(t => `<span style="font-size:11px;padding:2px 10px;border-radius:9999px;background:rgba(242,100,48,0.12);color:#B84B22;border:1px solid rgba(242,100,48,0.3);">${esc(t)}</span>`).join("");
+  const deleteBtn = isForeman() ? `<button data-delete-id="${e.id}" style="margin-top:10px;width:100%;padding:7px 0;border-radius:8px;border:1px solid rgba(192,57,43,0.35);background:rgba(192,57,43,0.06);color:#C0392B;font-size:12px;">🗑 Видалити запис</button>` : "";
   return `
   <div style="position:relative;margin-top:16px;transform:rotate(${rot});">
     <div style="position:absolute;top:-5px;left:0;right:0;display:flex;justify-content:space-around;padding:0 12px;">${dots}</div>
@@ -169,7 +244,7 @@ function ticketHTML(e) {
           <span style="font-style:italic;">${esc(e.author)}</span>
         </div>
       </div>
-      <button data-delete-id="${e.id}" style="margin-top:10px;width:100%;padding:7px 0;border-radius:8px;border:1px solid rgba(192,57,43,0.35);background:rgba(192,57,43,0.06);color:#C0392B;font-size:12px;">🗑 Видалити запис</button>
+      ${deleteBtn}
     </div>
   </div>`;
 }
@@ -181,6 +256,27 @@ function emptyStateHTML(text) {
   </div>`;
 }
 
+function adminHTML() {
+  if (!state.profiles.length) {
+    return emptyStateHTML("Завантаження списку людей...");
+  }
+  const rows = state.profiles.map(p => {
+    const isMe = state.user && p.id === state.user.id;
+    const foreman = p.role === "бригадир";
+    return `
+    <div style="background:${CARD};color:${INK};border-radius:10px;padding:14px 16px;margin-top:12px;display:flex;align-items:center;justify-content:space-between;gap:10px;">
+      <div style="min-width:0;">
+        <div style="font-size:13.5px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${esc(p.email)}${isMe ? " (ви)" : ""}</div>
+        <div class="font-mono" style="font-size:11px;opacity:0.55;margin-top:2px;">${foreman ? "бригадир" : "робітник"}</div>
+      </div>
+      <button data-role-id="${p.id}" data-role-next="${foreman ? "робітник" : "бригадир"}" style="flex-shrink:0;font-size:12px;padding:7px 12px;border-radius:8px;border:1px solid ${foreman ? "rgba(192,57,43,0.35)" : "rgba(242,100,48,0.4)"};background:${foreman ? "rgba(192,57,43,0.06)" : "rgba(242,100,48,0.1)"};color:${foreman ? "#C0392B" : "#B84B22"};">
+        ${foreman ? "Понизити" : "Зробити бригадиром"}
+      </button>
+    </div>`;
+  }).join("");
+  return `<div style="margin-top:8px;">${rows}</div>`;
+}
+
 function renderApp() {
   const todayEntries = state.entries.filter(e => e.date === todayISO());
   const groups = {};
@@ -190,11 +286,11 @@ function renderApp() {
   let contentHTML = "";
   if (state.view === "today") {
     contentHTML = todayEntries.length === 0
-      ? emptyStateHTML("Записів на сьогодні ще немає. Додайте перший запис про виконані роботи.")
+      ? emptyStateHTML("Записів на сьогодні ще немає.")
       : todayEntries.map(ticketHTML).join("");
-  } else {
+  } else if (state.view === "journal") {
     contentHTML = groupedDates.length === 0
-      ? emptyStateHTML("Журнал поки порожній. Перший запис з'явиться тут одразу після збереження.")
+      ? emptyStateHTML("Журнал поки порожній.")
       : groupedDates.map(date => `
         <div style="margin-top:24px;">
           <div class="font-mono" style="font-size:12px;text-transform:uppercase;color:${CYAN};opacity:0.8;">
@@ -202,7 +298,21 @@ function renderApp() {
           </div>
           ${groups[date].map(ticketHTML).join("")}
         </div>`).join("");
+  } else if (state.view === "admin") {
+    contentHTML = adminHTML();
   }
+
+  const navItems = [
+    ["today", "📋", "Сьогодні"],
+    ["journal", "📖", "Журнал"],
+  ];
+  if (isForeman()) navItems.push(["admin", "🧑‍🤝‍🧑", "Люди"]);
+
+  const navHTML = navItems.map(([key, icon, label]) => `
+    <button data-tab="${key}" style="flex:1;display:flex;flex-direction:column;align-items:center;gap:4px;padding:12px 0;background:none;border:none;">
+      <span style="font-size:18px;opacity:${state.view===key?1:0.55};">${icon}</span>
+      <span style="font-size:11px;color:${state.view===key?ORANGE:CYAN};opacity:${state.view===key?1:0.55};">${label}</span>
+    </button>`).join("");
 
   root.innerHTML = `
   <div style="background:${BG};min-height:100vh;background-image:linear-gradient(rgba(127,179,211,0.09) 1px, transparent 1px),linear-gradient(90deg, rgba(127,179,211,0.09) 1px, transparent 1px);background-size:26px 26px;">
@@ -215,29 +325,25 @@ function renderApp() {
               <span>👷</span>
               <h1 class="font-display" style="color:#fff;font-size:20px;letter-spacing:0.05em;">НАРЯД</h1>
             </div>
-            <p class="font-mono" style="color:${CYAN};opacity:0.75;font-size:12px;margin-top:2px;">${fmtLong(todayISO())}</p>
+            <p class="font-mono" style="color:${CYAN};opacity:0.75;font-size:12px;margin-top:2px;">${fmtLong(todayISO())} · ${isForeman() ? "бригадир" : "робітник"}</p>
           </div>
-          <div style="width:36px;height:36px;border-radius:9999px;background:rgba(242,100,48,0.18);color:${ORANGE};display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:600;">
-            ${esc(state.name.slice(0,1).toUpperCase())}
+          <div style="display:flex;align-items:center;gap:8px;">
+            <div style="width:36px;height:36px;border-radius:9999px;background:rgba(242,100,48,0.18);color:${ORANGE};display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:600;" title="${esc(state.user.email)}">
+              ${esc(state.user.email.slice(0,1).toUpperCase())}
+            </div>
+            <button id="signOutBtn" style="background:none;border:none;color:${CYAN};opacity:0.6;font-size:11px;">Вийти</button>
           </div>
         </div>
-        ${state.error ? `<div style="margin-top:10px;background:#C0392B;color:#fff;font-size:12px;padding:8px 12px;border-radius:8px;">${state.error}</div>` : ""}
+        ${state.error ? `<div style="margin-top:10px;background:#C0392B;color:#fff;font-size:12px;padding:8px 12px;border-radius:8px;">${esc(state.error)}</div>` : ""}
       </div>
 
       <div style="flex:1;padding:0 20px 112px;">${contentHTML}</div>
 
-      <button id="fabBtn" style="position:fixed;z-index:30;border-radius:9999px;background:${ORANGE};width:56px;height:56px;bottom:84px;left:50%;transform:translateX(calc(-50% + 184px));box-shadow:0 8px 20px rgba(0,0,0,0.35);border:none;color:#fff;font-size:26px;">+</button>
+      ${isForeman() ? `<button id="fabBtn" style="position:fixed;z-index:30;border-radius:9999px;background:${ORANGE};width:56px;height:56px;bottom:84px;left:50%;transform:translateX(calc(-50% + 184px));box-shadow:0 8px 20px rgba(0,0,0,0.35);border:none;color:#fff;font-size:26px;">+</button>` : ""}
 
       <div style="position:fixed;bottom:0;left:0;right:0;z-index:20;display:flex;justify-content:center;">
         <div style="width:100%;max-width:448px;display:flex;background:rgba(15,35,56,0.96);border-top:1px solid rgba(127,179,211,0.15);backdrop-filter:blur(6px);">
-          <button id="tabToday" style="flex:1;display:flex;flex-direction:column;align-items:center;gap:4px;padding:12px 0;background:none;border:none;">
-            <span style="font-size:18px;opacity:${state.view==='today'?1:0.55};">📋</span>
-            <span style="font-size:11px;color:${state.view==='today'?ORANGE:CYAN};opacity:${state.view==='today'?1:0.55};">Сьогодні</span>
-          </button>
-          <button id="tabJournal" style="flex:1;display:flex;flex-direction:column;align-items:center;gap:4px;padding:12px 0;background:none;border:none;">
-            <span style="font-size:18px;opacity:${state.view==='journal'?1:0.55};">📖</span>
-            <span style="font-size:11px;color:${state.view==='journal'?ORANGE:CYAN};opacity:${state.view==='journal'?1:0.55};">Журнал</span>
-          </button>
+          ${navHTML}
         </div>
       </div>
 
@@ -245,9 +351,19 @@ function renderApp() {
     </div>
   </div>`;
 
-  document.getElementById("fabBtn").onclick = () => setState({ showForm: true, formError: null });
-  document.getElementById("tabToday").onclick = () => setState({ view: "today" });
-  document.getElementById("tabJournal").onclick = () => setState({ view: "journal" });
+  const fab = document.getElementById("fabBtn");
+  if (fab) fab.onclick = () => setState({ showForm: true, formError: null });
+
+  document.getElementById("signOutBtn").onclick = signOut;
+
+  document.querySelectorAll("[data-tab]").forEach(btn => {
+    btn.onclick = () => {
+      const tab = btn.dataset.tab;
+      setState({ view: tab });
+      if (tab === "admin") loadProfiles();
+    };
+  });
+
   document.querySelectorAll("[data-delete-id]").forEach(btn => {
     btn.onclick = () => {
       if (confirm("Точно видалити цей запис? Це не можна скасувати.")) {
@@ -255,6 +371,11 @@ function renderApp() {
       }
     };
   });
+
+  document.querySelectorAll("[data-role-id]").forEach(btn => {
+    btn.onclick = () => setRole(btn.dataset.roleId, btn.dataset.roleNext);
+  });
+
   if (state.showForm) attachFormHandlers();
 }
 
@@ -345,9 +466,9 @@ function attachFormHandlers() {
 
 // ---- Старт ----
 render();
-if (state.name) loadEntries();
+initAuth();
 
-// ---- Реєстрація service worker (для встановлення як застосунок) ----
+// ---- Реєстрація service worker ----
 if ("serviceWorker" in navigator) {
   window.addEventListener("load", () => navigator.serviceWorker.register("sw.js").catch(()=>{}));
 }
