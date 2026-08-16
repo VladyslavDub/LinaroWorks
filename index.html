@@ -106,7 +106,8 @@ async function initAuth() {
 }
 
 async function loadProfile(user) {
-  const { data } = await supabase.from("profiles").select("role,email,full_name").eq("id", user.id).single();
+  const { data, error } = await supabase.from("profiles").select("role,email,full_name").eq("id", user.id).single();
+  if (error) console.error("Profile load error:", error);
   setState({ user, role: (data && data.role) || "робітник", fullName: (data && data.full_name) || null, authChecked: true });
   loadEntries();
 }
