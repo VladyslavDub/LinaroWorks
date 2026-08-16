@@ -28,6 +28,7 @@ const BG = "#16324F", CARD = "#F4F0E8", INK = "#1A1A18", ORANGE = "#F26430", CYA
 const WORK_TYPES = ["Земляні роботи","Бетонні роботи","Мурування","Покрівля","Електрика","Сантехніка","Оздоблення","Демонтаж","Інше"];
 const WEATHER = [["sun","☀️","Сонячно"],["cloud","☁️","Хмарно"],["rain","🌧️","Дощ"],["snow","❄️","Сніг"]];
 const MONTHS = ["січня","лютого","березня","квітня","травня","червня","липня","серпня","вересня","жовтня","листопада","грудня"];
+const MONTHS_NOM = ["Січень","Лютий","Березень","Квітень","Травень","Червень","Липень","Серпень","Вересень","Жовтень","Листопад","Грудень"];
 const WEEKDAYS = ["неділя","понеділок","вівторок","середа","четвер","п'ятниця","субота"];
 
 const todayISO = () => new Date().toISOString().slice(0,10);
@@ -74,6 +75,7 @@ let state = {
   showHoursForm: false,
   hoursSaving: false,
   hoursFormError: null,
+  hoursSearch: "",
   authMode: "signin",
   authError: null,
   authBusy: false,
@@ -104,10 +106,12 @@ async function initAuth() {
 }
 
 async function loadProfile(user) {
-  const { data } = await supabase.from("profiles").select("role,email").eq("id", user.id).single();
-  setState({ user, role: (data && data.role) || "робітник", authChecked: true });
+  const { data } = await supabase.from("profiles").select("role,email,full_name").eq("id", user.id).single();
+  setState({ user, role: (data && data.role) || "робітник", fullName: (data && data.full_name) || null, authChecked: true });
   loadEntries();
 }
+
+const displayName = () => state.fullName || state.user.email;
 
 async function signIn(email, password) {
   setState({ authBusy: true, authError: null });
@@ -116,9 +120,9 @@ async function signIn(email, password) {
   setState({ authBusy: false });
 }
 
-async function signUp(email, password) {
+async function signUp(email, password, fullName) {
   setState({ authBusy: true, authError: null });
-  const { error } = await supabase.auth.signUp({ email, password });
+  const { error } = await supabase.auth.signUp({ email, password, options: { data: { full_name: fullName } } });
   if (error) { setState({ authBusy: false, authError: error.message }); return; }
   setState({ authBusy: false });
 }
@@ -140,7 +144,7 @@ async function loadEntries() {
 
 async function saveEntry(formData) {
   setState({ saving: true, formError: null });
-  const { error } = await supabase.from("entries").insert([{ ...formData, author: state.user.email }]);
+  const { error } = await supabase.from("entries").insert([{ ...formData, author: displayName() }]);
   if (error) {
     setState({ saving: false, formError: "Не вдалося зберегти запис. Спробуйте ще раз." });
     return;
@@ -171,7 +175,7 @@ async function loadTimeEntries() {
 async function addTimeEntry(data) {
   setState({ hoursSaving: true, hoursFormError: null });
   const { error } = await supabase.from("time_entries").insert([{
-    ...data, user_id: state.user.id, author_email: state.user.email,
+    ...data, user_id: state.user.id, author_email: state.user.email, author_name: displayName(),
   }]);
   if (error) { setState({ hoursSaving: false, hoursFormError: "Не вдалося зберегти. Спробуйте ще раз." }); return; }
   setState({ hoursSaving: false, showHoursForm: false });
@@ -194,14 +198,21 @@ async function deleteTimeEntry(id) {
   loadTimeEntries();
 }
 
-function computeHoursLabel(e) {
+function computeHoursMinutes(e) {
   const toMin = (t) => { const [h,m] = t.split(":").map(Number); return h*60+m; };
   let diff = toMin(e.check_out) - toMin(e.check_in);
   if (diff < 0) diff += 24*60;
   if (e.lunch_break) diff -= 30;
-  if (diff < 0) diff = 0;
-  const h = Math.floor(diff/60), m = diff%60;
+  return Math.max(diff, 0);
+}
+
+function minutesLabel(total) {
+  const h = Math.floor(total/60), m = total%60;
   return `${h} год${m ? " " + m + " хв" : ""}`;
+}
+
+function computeHoursLabel(e) {
+  return minutesLabel(computeHoursMinutes(e));
 }
 
 // Живе оновлення для годин
@@ -211,7 +222,7 @@ supabase.channel("time-entries-changes")
 
 // ---- Робота з профілями (для адмін-вкладки) ----
 async function loadProfiles() {
-  const { data, error } = await supabase.from("profiles").select("*").order("email");
+  const { data, error } = await supabase.from("profiles").select("id,email,role,full_name").order("email");
   if (error) { setState({ error: "Не вдалося завантажити список людей: " + error.message }); return; }
   setState({ profiles: data, error: null });
 }
@@ -245,6 +256,11 @@ function renderAuthGate() {
         <p style="color:${CYAN};opacity:0.8;font-size:14px;margin-bottom:24px;">Щоденник робіт на об'єкті</p>
 
         <input id="authEmail" type="email" placeholder="Email" style="width:100%;padding:12px 16px;border-radius:8px;background:${CARD};color:${INK};border:none;outline:none;font-size:14px;margin-bottom:10px;box-sizing:border-box;" />
+        ${!isSignIn ? `
+        <div style="display:flex;gap:8px;margin-bottom:10px;">
+          <input id="authFirst" type="text" placeholder="Ім'я" style="flex:1;padding:12px 16px;border-radius:8px;background:${CARD};color:${INK};border:none;outline:none;font-size:14px;box-sizing:border-box;" />
+          <input id="authLast" type="text" placeholder="Прізвище" style="flex:1;padding:12px 16px;border-radius:8px;background:${CARD};color:${INK};border:none;outline:none;font-size:14px;box-sizing:border-box;" />
+        </div>` : ""}
         <input id="authPass" type="password" placeholder="Пароль" style="width:100%;padding:12px 16px;border-radius:8px;background:${CARD};color:${INK};border:none;outline:none;font-size:14px;margin-bottom:12px;box-sizing:border-box;" />
 
         ${state.authError ? `<div style="color:#ffb4b4;font-size:12px;margin-bottom:12px;">${esc(state.authError)}</div>` : ""}
@@ -265,7 +281,14 @@ function renderAuthGate() {
     const email = emailInput.value.trim();
     const pass = passInput.value;
     if (!email || !pass) { setState({ authError: "Заповніть email і пароль." }); return; }
-    isSignIn ? signIn(email, pass) : signUp(email, pass);
+    if (isSignIn) {
+      signIn(email, pass);
+    } else {
+      const first = document.getElementById("authFirst").value.trim();
+      const last = document.getElementById("authLast").value.trim();
+      if (!first || !last) { setState({ authError: "Заповніть ім'я і прізвище." }); return; }
+      signUp(email, pass, `${first} ${last}`);
+    }
   };
   document.getElementById("authSubmit").onclick = submit;
   passInput.addEventListener("keydown", (e) => { if (e.key === "Enter") submit(); });
@@ -314,7 +337,7 @@ function timeTicketHTML(e) {
   return `
   <div style="background:${CARD};color:${INK};border-radius:10px;padding:14px 16px;margin-top:12px;">
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">
-      <div class="font-mono" style="font-size:12px;opacity:0.6;">${fmtShort(e.date)} · ${esc(e.author_email)}</div>
+      <div class="font-mono" style="font-size:12px;opacity:0.6;">${fmtShort(e.date)}${isForeman() ? "" : " · " + esc(e.author_name || e.author_email)}</div>
       <span style="font-size:11px;padding:2px 9px;border-radius:9999px;background:${pending ? "rgba(242,100,48,0.12)" : "rgba(91,140,90,0.15)"};color:${pending ? "#B84B22" : "#3F6B3E"};">${pending ? "очікує" : "підтверджено"}</span>
     </div>
 
@@ -342,10 +365,65 @@ function timeTicketHTML(e) {
 }
 
 function hoursHTML() {
-  const list = state.timeEntries;
-  const addBtn = `<button id="addHoursBtn" class="font-display" style="width:100%;padding:12px;border-radius:10px;background:${ORANGE};color:#fff;font-weight:600;letter-spacing:0.03em;border:none;font-size:13px;margin-top:4px;">+ ДОДАТИ ГОДИНИ</button>`;
-  if (!list.length) return addBtn + emptyStateHTML("Записів про години ще немає.");
-  return addBtn + list.map(timeTicketHTML).join("");
+  const addBtn = `<button id="addHoursBtn" class="font-display" style="width:100%;padding:12px;border-radius:10px;background:${ORANGE};color:#fff;font-weight:600;letter-spacing:0.03em;border:none;font-size:13px;margin-bottom:4px;">+ ДОДАТИ ГОДИНИ</button>`;
+
+  const searchBox = isForeman() ? `
+    <input id="hoursSearchInput" type="text" value="${esc(state.hoursSearch)}" placeholder="Пошук по імені..." style="width:100%;margin-top:12px;padding:10px 14px;border-radius:8px;border:none;background:${CARD};color:${INK};font-size:13px;box-sizing:border-box;" />` : "";
+
+  let list = state.timeEntries;
+  const q = state.hoursSearch.trim().toLowerCase();
+  if (isForeman() && q) {
+    list = list.filter(e => (e.author_name || "").toLowerCase().includes(q) || (e.author_email || "").toLowerCase().includes(q));
+  }
+
+  if (!list.length) return addBtn + searchBox + emptyStateHTML("Записів про години ще немає.");
+
+  // Групування: місяць -> робітник
+  const months = {};
+  list.forEach(e => {
+    const monthKey = e.date.slice(0,7); // YYYY-MM
+    (months[monthKey] = months[monthKey] || []).push(e);
+  });
+  const monthKeys = Object.keys(months).sort((a,b) => a < b ? 1 : -1);
+
+  const monthsHTML = monthKeys.map(monthKey => {
+    const entriesInMonth = months[monthKey];
+    const [y, m] = monthKey.split("-").map(Number);
+    const monthLabel = `${MONTHS_NOM[m-1]} ${y}`;
+    const monthTotal = entriesInMonth.reduce((sum, e) => sum + computeHoursMinutes(e), 0);
+
+    // Групування по робітнику всередині місяця
+    const byWorker = {};
+    entriesInMonth.forEach(e => {
+      const key = e.author_name || e.author_email;
+      (byWorker[key] = byWorker[key] || []).push(e);
+    });
+    const workerNames = Object.keys(byWorker).sort((a,b) => a.localeCompare(b, "uk"));
+
+    const workersHTML = workerNames.map(name => {
+      const wEntries = byWorker[name].sort((a,b) => a.date < b.date ? 1 : -1);
+      const wTotal = wEntries.reduce((sum, e) => sum + computeHoursMinutes(e), 0);
+      return `
+        <div style="margin-top:14px;">
+          ${isForeman() ? `<div style="display:flex;align-items:center;justify-content:space-between;padding:0 2px;margin-bottom:2px;">
+            <span style="font-size:13px;font-weight:600;color:#fff;">${esc(name)}</span>
+            <span class="font-mono" style="font-size:12px;color:${CYAN};opacity:0.8;">${minutesLabel(wTotal)}</span>
+          </div>` : ""}
+          ${wEntries.map(timeTicketHTML).join("")}
+        </div>`;
+    }).join("");
+
+    return `
+      <div style="margin-top:24px;">
+        <div style="display:flex;align-items:center;justify-content:space-between;">
+          <span class="font-mono" style="font-size:12px;text-transform:uppercase;color:${CYAN};opacity:0.8;">${monthLabel}</span>
+          <span class="font-mono" style="font-size:12px;color:${ORANGE};font-weight:600;">Разом: ${minutesLabel(monthTotal)}</span>
+        </div>
+        ${workersHTML}
+      </div>`;
+  }).join("");
+
+  return addBtn + searchBox + monthsHTML;
 }
 
 function hoursFormHTML() {
@@ -412,8 +490,8 @@ function adminHTML() {
     return `
     <div style="background:${CARD};color:${INK};border-radius:10px;padding:14px 16px;margin-top:12px;display:flex;align-items:center;justify-content:space-between;gap:10px;">
       <div style="min-width:0;">
-        <div style="font-size:13.5px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${esc(p.email)}${isMe ? " (ви)" : ""}</div>
-        <div class="font-mono" style="font-size:11px;opacity:0.55;margin-top:2px;">${foreman ? "бригадир" : "робітник"}</div>
+        <div style="font-size:13.5px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${esc(p.full_name || p.email)}${isMe ? " (ви)" : ""}</div>
+        <div class="font-mono" style="font-size:11px;opacity:0.55;margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${esc(p.email)} · ${foreman ? "бригадир" : "робітник"}</div>
       </div>
       <button data-role-id="${p.id}" data-role-next="${foreman ? "робітник" : "бригадир"}" style="flex-shrink:0;font-size:12px;padding:7px 12px;border-radius:8px;border:1px solid ${foreman ? "rgba(192,57,43,0.35)" : "rgba(242,100,48,0.4)"};background:${foreman ? "rgba(192,57,43,0.06)" : "rgba(242,100,48,0.1)"};color:${foreman ? "#C0392B" : "#B84B22"};">
         ${foreman ? "Понизити" : "Зробити бригадиром"}
@@ -477,8 +555,8 @@ function renderApp() {
             <p class="font-mono" style="color:${CYAN};opacity:0.75;font-size:12px;margin-top:2px;">${fmtLong(todayISO())} · ${isForeman() ? "бригадир" : "робітник"}</p>
           </div>
           <div style="display:flex;align-items:center;gap:8px;">
-            <div style="width:36px;height:36px;border-radius:9999px;background:rgba(242,100,48,0.18);color:${ORANGE};display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:600;" title="${esc(state.user.email)}">
-              ${esc(state.user.email.slice(0,1).toUpperCase())}
+            <div style="width:36px;height:36px;border-radius:9999px;background:rgba(242,100,48,0.18);color:${ORANGE};display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:600;" title="${esc(displayName())}">
+              ${esc(displayName().slice(0,1).toUpperCase())}
             </div>
             <button id="signOutBtn" style="background:none;border:none;color:${CYAN};opacity:0.6;font-size:11px;">Вийти</button>
           </div>
@@ -529,6 +607,13 @@ function renderApp() {
 
   const addHoursBtn = document.getElementById("addHoursBtn");
   if (addHoursBtn) addHoursBtn.onclick = () => setState({ showHoursForm: true, hoursFormError: null });
+
+  const hoursSearchInput = document.getElementById("hoursSearchInput");
+  if (hoursSearchInput) {
+    hoursSearchInput.oninput = (e) => { state.hoursSearch = e.target.value; render(); };
+    hoursSearchInput.focus();
+    hoursSearchInput.setSelectionRange(hoursSearchInput.value.length, hoursSearchInput.value.length);
+  }
 
   document.querySelectorAll("[data-checkin-id]").forEach(inp => {
     inp.onchange = () => updateTimeEntry(Number(inp.dataset.checkinId), { check_in: inp.value });
