@@ -65,11 +65,15 @@ let state = {
   loading: true,
   entries: [],
   profiles: [],
+  timeEntries: [],
   view: "today",
   showForm: false,
   saving: false,
   error: null,
   formError: null,
+  showHoursForm: false,
+  hoursSaving: false,
+  hoursFormError: null,
   authMode: "signin",
   authError: null,
   authBusy: false,
@@ -155,6 +159,54 @@ async function deleteEntry(id) {
 supabase.channel("entries-changes")
   .on("postgres_changes", { event: "INSERT", schema: "public", table: "entries" }, () => { if (state.user) loadEntries(); })
   .on("postgres_changes", { event: "DELETE", schema: "public", table: "entries" }, () => { if (state.user) loadEntries(); })
+  .subscribe();
+
+// ---- Робота з базою даних (години) ----
+async function loadTimeEntries() {
+  const { data, error } = await supabase.from("time_entries").select("*").order("date", { ascending:false }).order("created_at", { ascending:false });
+  if (error) { setState({ error: "Не вдалося завантажити години: " + error.message }); return; }
+  setState({ timeEntries: data, error: null });
+}
+
+async function addTimeEntry(data) {
+  setState({ hoursSaving: true, hoursFormError: null });
+  const { error } = await supabase.from("time_entries").insert([{
+    ...data, user_id: state.user.id, author_email: state.user.email,
+  }]);
+  if (error) { setState({ hoursSaving: false, hoursFormError: "Не вдалося зберегти. Спробуйте ще раз." }); return; }
+  setState({ hoursSaving: false, showHoursForm: false });
+  loadTimeEntries();
+}
+
+async function updateTimeEntry(id, patch) {
+  const { error } = await supabase.from("time_entries").update(patch).eq("id", id);
+  if (error) { alert("Не вдалося оновити: " + error.message); return; }
+  loadTimeEntries();
+}
+
+async function confirmTimeEntry(id) {
+  updateTimeEntry(id, { status: "підтверджено" });
+}
+
+async function deleteTimeEntry(id) {
+  const { error } = await supabase.from("time_entries").delete().eq("id", id);
+  if (error) { alert("Не вдалося видалити: " + error.message); return; }
+  loadTimeEntries();
+}
+
+function computeHoursLabel(e) {
+  const toMin = (t) => { const [h,m] = t.split(":").map(Number); return h*60+m; };
+  let diff = toMin(e.check_out) - toMin(e.check_in);
+  if (diff < 0) diff += 24*60;
+  if (e.lunch_break) diff -= 30;
+  if (diff < 0) diff = 0;
+  const h = Math.floor(diff/60), m = diff%60;
+  return `${h} год${m ? " " + m + " хв" : ""}`;
+}
+
+// Живе оновлення для годин
+supabase.channel("time-entries-changes")
+  .on("postgres_changes", { event: "*", schema: "public", table: "time_entries" }, () => { if (state.user) loadTimeEntries(); })
   .subscribe();
 
 // ---- Робота з профілями (для адмін-вкладки) ----
@@ -256,6 +308,100 @@ function emptyStateHTML(text) {
   </div>`;
 }
 
+function timeTicketHTML(e) {
+  const canEdit = isForeman() || (e.user_id === state.user.id && e.status === "очікує");
+  const pending = e.status === "очікує";
+  return `
+  <div style="background:${CARD};color:${INK};border-radius:10px;padding:14px 16px;margin-top:12px;">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">
+      <div class="font-mono" style="font-size:12px;opacity:0.6;">${fmtShort(e.date)} · ${esc(e.author_email)}</div>
+      <span style="font-size:11px;padding:2px 9px;border-radius:9999px;background:${pending ? "rgba(242,100,48,0.12)" : "rgba(91,140,90,0.15)"};color:${pending ? "#B84B22" : "#3F6B3E"};">${pending ? "очікує" : "підтверджено"}</span>
+    </div>
+
+    ${canEdit ? `
+      <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px;">
+        <input type="time" data-checkin-id="${e.id}" value="${(e.check_in||"").slice(0,5)}" style="flex:1;padding:8px 10px;border-radius:8px;border:1px solid rgba(26,26,24,0.15);font-size:13px;box-sizing:border-box;" />
+        <span style="opacity:0.4;">→</span>
+        <input type="time" data-checkout-id="${e.id}" value="${(e.check_out||"").slice(0,5)}" style="flex:1;padding:8px 10px;border-radius:8px;border:1px solid rgba(26,26,24,0.15);font-size:13px;box-sizing:border-box;" />
+      </div>
+      <label style="display:flex;align-items:center;gap:6px;font-size:12px;opacity:0.75;margin-bottom:10px;">
+        <input type="checkbox" data-lunch-id="${e.id}" ${e.lunch_break ? "checked" : ""} /> Обідня перерва (−30 хв)
+      </label>
+    ` : `
+      <div style="font-size:14px;margin-bottom:6px;">${(e.check_in||"").slice(0,5)} → ${(e.check_out||"").slice(0,5)}${e.lunch_break ? " · обід −30хв" : ""}</div>
+    `}
+
+    <div style="display:flex;align-items:center;justify-content:space-between;">
+      <div class="font-mono" style="font-size:13px;font-weight:600;">${computeHoursLabel(e)}</div>
+      <div style="display:flex;gap:6px;">
+        ${isForeman() && pending ? `<button data-confirm-id="${e.id}" style="font-size:11px;padding:5px 10px;border-radius:6px;border:1px solid rgba(91,140,90,0.4);background:rgba(91,140,90,0.1);color:#3F6B3E;">Підтвердити</button>` : ""}
+        ${isForeman() ? `<button data-deletehours-id="${e.id}" style="font-size:11px;padding:5px 10px;border-radius:6px;border:1px solid rgba(192,57,43,0.35);background:rgba(192,57,43,0.06);color:#C0392B;">🗑</button>` : ""}
+      </div>
+    </div>
+  </div>`;
+}
+
+function hoursHTML() {
+  const list = state.timeEntries;
+  const addBtn = `<button id="addHoursBtn" class="font-display" style="width:100%;padding:12px;border-radius:10px;background:${ORANGE};color:#fff;font-weight:600;letter-spacing:0.03em;border:none;font-size:13px;margin-top:4px;">+ ДОДАТИ ГОДИНИ</button>`;
+  if (!list.length) return addBtn + emptyStateHTML("Записів про години ще немає.");
+  return addBtn + list.map(timeTicketHTML).join("");
+}
+
+function hoursFormHTML() {
+  return `
+  <div style="position:fixed;inset:0;z-index:50;display:flex;align-items:flex-end;justify-content:center;">
+    <div id="hoursBackdrop" style="position:absolute;inset:0;background:rgba(0,0,0,0.55);"></div>
+    <div style="position:relative;width:100%;max-width:448px;border-radius:16px 16px 0 0;padding:20px;padding-bottom:32px;background:${CARD};color:${INK};">
+      <div style="width:40px;height:4px;border-radius:9999px;background:rgba(0,0,0,0.15);margin:0 auto 16px;"></div>
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">
+        <h2 class="font-display" style="font-size:18px;font-weight:600;">ГОДИНИ РОБОТИ</h2>
+        <button id="closeHoursForm" style="background:none;border:none;font-size:18px;opacity:0.5;">✕</button>
+      </div>
+
+      <label class="font-mono" style="display:block;font-size:11px;text-transform:uppercase;opacity:0.5;margin-bottom:4px;">Дата</label>
+      <input id="hDate" type="date" value="${todayISO()}" max="${todayISO()}" class="font-mono" style="width:100%;margin-bottom:16px;padding:10px 12px;border-radius:8px;border:1px solid rgba(26,26,24,0.15);font-size:14px;box-sizing:border-box;" />
+
+      <div style="display:flex;gap:10px;margin-bottom:16px;">
+        <div style="flex:1;">
+          <label class="font-mono" style="display:block;font-size:11px;text-transform:uppercase;opacity:0.5;margin-bottom:4px;">Прихід</label>
+          <input id="hCheckIn" type="time" value="08:00" style="width:100%;padding:10px 12px;border-radius:8px;border:1px solid rgba(26,26,24,0.15);font-size:14px;box-sizing:border-box;" />
+        </div>
+        <div style="flex:1;">
+          <label class="font-mono" style="display:block;font-size:11px;text-transform:uppercase;opacity:0.5;margin-bottom:4px;">Вихід</label>
+          <input id="hCheckOut" type="time" value="17:00" style="width:100%;padding:10px 12px;border-radius:8px;border:1px solid rgba(26,26,24,0.15);font-size:14px;box-sizing:border-box;" />
+        </div>
+      </div>
+
+      <label style="display:flex;align-items:center;gap:8px;font-size:13px;margin-bottom:16px;">
+        <input id="hLunch" type="checkbox" /> Була обідня перерва (−30 хв від годин)
+      </label>
+
+      ${state.hoursFormError ? `<div style="color:#C0392B;font-size:12px;margin-bottom:12px;">${esc(state.hoursFormError)}</div>` : ""}
+
+      <button id="hoursSaveBtn" class="font-display" ${state.hoursSaving ? "disabled" : ""} style="width:100%;padding:12px;border-radius:8px;background:${ORANGE};color:#fff;font-weight:600;letter-spacing:0.03em;border:none;font-size:14px;opacity:${state.hoursSaving?0.6:1};">
+        ${state.hoursSaving ? "ЗБЕРЕЖЕННЯ..." : "ЗБЕРЕГТИ"}
+      </button>
+    </div>
+  </div>`;
+}
+
+function attachHoursFormHandlers() {
+  document.getElementById("hoursBackdrop").onclick = () => setState({ showHoursForm: false });
+  document.getElementById("closeHoursForm").onclick = () => setState({ showHoursForm: false });
+  document.getElementById("hoursSaveBtn").onclick = () => {
+    const date = document.getElementById("hDate").value;
+    const check_in = document.getElementById("hCheckIn").value;
+    const check_out = document.getElementById("hCheckOut").value;
+    const lunch_break = document.getElementById("hLunch").checked;
+    if (!date || !check_in || !check_out) {
+      setState({ hoursFormError: "Заповніть дату, прихід і вихід." });
+      return;
+    }
+    addTimeEntry({ date, check_in, check_out, lunch_break });
+  };
+}
+
 function adminHTML() {
   if (!state.profiles.length) {
     return emptyStateHTML("Завантаження списку людей...");
@@ -298,6 +444,8 @@ function renderApp() {
           </div>
           ${groups[date].map(ticketHTML).join("")}
         </div>`).join("");
+  } else if (state.view === "hours") {
+    contentHTML = hoursHTML();
   } else if (state.view === "admin") {
     contentHTML = adminHTML();
   }
@@ -305,6 +453,7 @@ function renderApp() {
   const navItems = [
     ["today", "📋", "Сьогодні"],
     ["journal", "📖", "Журнал"],
+    ["hours", "⏱️", "Години"],
   ];
   if (isForeman()) navItems.push(["admin", "🧑‍🤝‍🧑", "Люди"]);
 
@@ -339,7 +488,7 @@ function renderApp() {
 
       <div style="flex:1;padding:0 20px 112px;">${contentHTML}</div>
 
-      ${isForeman() ? `<button id="fabBtn" style="position:fixed;z-index:30;border-radius:9999px;background:${ORANGE};width:56px;height:56px;bottom:84px;left:50%;transform:translateX(calc(-50% + 184px));box-shadow:0 8px 20px rgba(0,0,0,0.35);border:none;color:#fff;font-size:26px;">+</button>` : ""}
+      ${isForeman() && (state.view === "today" || state.view === "journal") ? `<button id="fabBtn" style="position:fixed;z-index:30;border-radius:9999px;background:${ORANGE};width:56px;height:56px;bottom:84px;left:50%;transform:translateX(calc(-50% + 184px));box-shadow:0 8px 20px rgba(0,0,0,0.35);border:none;color:#fff;font-size:26px;">+</button>` : ""}
 
       <div style="position:fixed;bottom:0;left:0;right:0;z-index:20;display:flex;justify-content:center;">
         <div style="width:100%;max-width:448px;display:flex;background:rgba(15,35,56,0.96);border-top:1px solid rgba(127,179,211,0.15);backdrop-filter:blur(6px);">
@@ -348,6 +497,7 @@ function renderApp() {
       </div>
 
       ${state.showForm ? formHTML() : ""}
+      ${state.showHoursForm ? hoursFormHTML() : ""}
     </div>
   </div>`;
 
@@ -361,6 +511,7 @@ function renderApp() {
       const tab = btn.dataset.tab;
       setState({ view: tab });
       if (tab === "admin") loadProfiles();
+      if (tab === "hours") loadTimeEntries();
     };
   });
 
@@ -376,7 +527,29 @@ function renderApp() {
     btn.onclick = () => setRole(btn.dataset.roleId, btn.dataset.roleNext);
   });
 
+  const addHoursBtn = document.getElementById("addHoursBtn");
+  if (addHoursBtn) addHoursBtn.onclick = () => setState({ showHoursForm: true, hoursFormError: null });
+
+  document.querySelectorAll("[data-checkin-id]").forEach(inp => {
+    inp.onchange = () => updateTimeEntry(Number(inp.dataset.checkinId), { check_in: inp.value });
+  });
+  document.querySelectorAll("[data-checkout-id]").forEach(inp => {
+    inp.onchange = () => updateTimeEntry(Number(inp.dataset.checkoutId), { check_out: inp.value });
+  });
+  document.querySelectorAll("[data-lunch-id]").forEach(inp => {
+    inp.onchange = () => updateTimeEntry(Number(inp.dataset.lunchId), { lunch_break: inp.checked });
+  });
+  document.querySelectorAll("[data-confirm-id]").forEach(btn => {
+    btn.onclick = () => confirmTimeEntry(Number(btn.dataset.confirmId));
+  });
+  document.querySelectorAll("[data-deletehours-id]").forEach(btn => {
+    btn.onclick = () => {
+      if (confirm("Точно видалити цей запис годин?")) deleteTimeEntry(Number(btn.dataset.deletehoursId));
+    };
+  });
+
   if (state.showForm) attachFormHandlers();
+  if (state.showHoursForm) attachHoursFormHandlers();
 }
 
 let formState = { date: todayISO(), site: "", weather: "sun", workTypes: [], workers: "", description: "" };
