@@ -1,6 +1,6 @@
 {
-  "name": "Наряд — щоденник робіт",
-  "short_name": "Наряд",
+  "name": "LinaroWorks — щоденник робіт",
+  "short_name": "LinaroWorks",
   "description": "Щоденник робіт на будмайданчику",
   "start_url": "./index.html",
   "scope": "./",
