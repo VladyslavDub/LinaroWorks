@@ -31,6 +31,21 @@
   @media (min-width: 1280px) {
     .tickets-grid { grid-template-columns: repeat(3, 1fr); }
   }
+
+  /* ---- Безпечні зони (виїмка / індикатор Home на iPhone) ---- */
+  .safe-bottom { padding-bottom: max(12px, env(safe-area-inset-bottom)); }
+  .fab-safe { bottom: calc(84px + env(safe-area-inset-bottom)); }
+  .content-safe { padding-bottom: calc(112px + env(safe-area-inset-bottom)); }
+
+  /* ---- Дуже вузькі екрани (старі/малі телефони) ---- */
+  @media (max-width: 359px) {
+    .header-row { gap: 6px; }
+    .app-title { font-size: 17px !important; }
+  }
+
+  /* ---- Заголовок не має обрізатись/налазити на вузьких екранах ---- */
+  .header-row { flex-wrap: wrap; gap: 10px; row-gap: 8px; }
+  .header-actions { flex-wrap: wrap; justify-content: flex-end; }
 </style>
 </head>
 <body>
@@ -653,15 +668,15 @@ function renderApp() {
     <div class="app-shell" style="min-height:100vh;position:relative;display:flex;flex-direction:column;">
 
       <div style="position:sticky;top:0;z-index:20;padding:24px 20px 16px;background:rgba(15,35,56,0.92);backdrop-filter:blur(6px);">
-        <div style="display:flex;align-items:center;justify-content:space-between;">
+        <div class="header-row" style="display:flex;align-items:center;justify-content:space-between;">
           <div>
             <div style="display:flex;align-items:center;gap:8px;">
               <span>👷</span>
-              <h1 class="font-display" style="color:#fff;font-size:20px;letter-spacing:0.03em;">${APP_NAME}</h1>
+              <h1 class="font-display app-title" style="color:#fff;font-size:20px;letter-spacing:0.03em;">${APP_NAME}</h1>
             </div>
             <p class="font-mono" style="color:${CYAN};opacity:0.75;font-size:12px;margin-top:2px;">${fmtLong(todayISO())} · ${isForeman() ? t("roleForeman") : t("roleWorker")}</p>
           </div>
-          <div style="display:flex;align-items:center;gap:10px;">
+          <div class="header-actions" style="display:flex;align-items:center;gap:10px;">
             ${langToggleHTML()}
             <div style="width:36px;height:36px;border-radius:9999px;background:rgba(242,100,48,0.18);color:${ORANGE};display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:600;" title="${esc(displayName())}">
               ${esc(displayName().slice(0,1).toUpperCase())}
@@ -672,12 +687,12 @@ function renderApp() {
         ${state.error ? `<div style="margin-top:10px;background:#C0392B;color:#fff;font-size:12px;padding:8px 12px;border-radius:8px;">${esc(state.error)}</div>` : ""}
       </div>
 
-      <div style="flex:1;padding:0 20px 112px;">${contentHTML}</div>
+      <div class="content-safe" style="flex:1;padding:0 20px;">${contentHTML}</div>
 
-      ${isForeman() && (state.view === "today" || state.view === "journal") ? `<button id="fabBtn" style="position:absolute;z-index:30;border-radius:9999px;background:${ORANGE};width:56px;height:56px;bottom:84px;right:20px;box-shadow:0 8px 20px rgba(0,0,0,0.35);border:none;color:#fff;font-size:26px;">+</button>` : ""}
+      ${isForeman() && (state.view === "today" || state.view === "journal") ? `<button id="fabBtn" class="fab-safe" style="position:absolute;z-index:30;border-radius:9999px;background:${ORANGE};width:56px;height:56px;right:20px;box-shadow:0 8px 20px rgba(0,0,0,0.35);border:none;color:#fff;font-size:26px;">+</button>` : ""}
 
       <div style="position:fixed;bottom:0;left:0;right:0;z-index:20;display:flex;justify-content:center;">
-        <div class="app-shell" style="width:100%;display:flex;background:rgba(15,35,56,0.96);border-top:1px solid rgba(127,179,211,0.15);backdrop-filter:blur(6px);">
+        <div class="app-shell safe-bottom" style="width:100%;display:flex;flex-wrap:wrap;background:rgba(15,35,56,0.96);border-top:1px solid rgba(127,179,211,0.15);backdrop-filter:blur(6px);">
           ${navHTML}
         </div>
       </div>
@@ -749,7 +764,7 @@ let hoursSearchActive = false;
 
 function formHTML() {
   const weatherBtns = WEATHER.map(([key,emoji]) => `
-    <button data-weather="${key}" style="flex:1;padding:10px 0;border-radius:8px;border:1px solid ${formState.weather===key?ORANGE:'rgba(26,26,24,0.15)'};background:${formState.weather===key?'rgba(242,100,48,0.1)':'transparent'};display:flex;flex-direction:column;align-items:center;gap:2px;">
+    <button data-weather="${key}" style="flex:1 1 64px;min-width:64px;padding:10px 0;border-radius:8px;border:1px solid ${formState.weather===key?ORANGE:'rgba(26,26,24,0.15)'};background:${formState.weather===key?'rgba(242,100,48,0.1)':'transparent'};display:flex;flex-direction:column;align-items:center;gap:2px;">
       <span style="font-size:16px;">${emoji}</span><span style="font-size:10px;opacity:${formState.weather===key?1:0.6};color:${INK};">${esc(tt(WEATHER_LABELS[key]))}</span>
     </button>`).join("");
 
@@ -773,7 +788,7 @@ function formHTML() {
       <input id="fSite" type="text" value="${esc(formState.site)}" placeholder="${t("sitePh")}" style="width:100%;margin-bottom:16px;padding:10px 12px;border-radius:8px;border:1px solid rgba(26,26,24,0.15);font-size:14px;box-sizing:border-box;" />
 
       <label class="font-mono" style="display:block;font-size:11px;text-transform:uppercase;opacity:0.5;margin-bottom:8px;">${t("fieldWeather")}</label>
-      <div style="display:flex;gap:8px;margin-bottom:16px;">${weatherBtns}</div>
+      <div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:16px;">${weatherBtns}</div>
 
       <label class="font-mono" style="display:block;font-size:11px;text-transform:uppercase;opacity:0.5;margin-bottom:8px;">${t("fieldWorkTypes")}</label>
       <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:16px;">${typeChips}</div>
