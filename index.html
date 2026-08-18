@@ -488,7 +488,7 @@ function timeTicketHTML(e) {
 function hoursHTML() {
   const addBtn = `<button id="addHoursBtn" class="font-display" style="width:100%;padding:12px;border-radius:10px;background:${ORANGE};color:#fff;font-weight:600;letter-spacing:0.03em;border:none;font-size:13px;margin-bottom:4px;">${t("addHoursBtn")}</button>`;
   const searchBox = isForeman() ? `
-    <input id="hoursSearchInput" type="text" value="${esc(state.hoursSearch)}" placeholder="${t("searchPh")}" style="width:100%;margin-top:12px;padding:10px 14px;border-radius:8px;border:none;background:${CARD};color:${INK};font-size:13px;box-sizing:border-box;" />` : "";
+    <input id="hoursSearchInput" type="text" value="${esc(state.hoursSearch)}" placeholder="${t("searchPh")}" style="width:100%;margin-top:12px;padding:10px 14px;border-radius:8px;border:none;background:${CARD};color:${INK};font-size:16px;box-sizing:border-box;" />` : "";
 
   let list = state.timeEntries;
   const q = state.hoursSearch.trim().toLowerCase();
@@ -677,7 +677,7 @@ function renderApp() {
       ${isForeman() && (state.view === "today" || state.view === "journal") ? `<button id="fabBtn" style="position:absolute;z-index:30;border-radius:9999px;background:${ORANGE};width:56px;height:56px;bottom:84px;right:20px;box-shadow:0 8px 20px rgba(0,0,0,0.35);border:none;color:#fff;font-size:26px;">+</button>` : ""}
 
       <div style="position:fixed;bottom:0;left:0;right:0;z-index:20;display:flex;justify-content:center;">
-        <div class="app-shell" style="display:flex;background:rgba(15,35,56,0.96);border-top:1px solid rgba(127,179,211,0.15);backdrop-filter:blur(6px);">
+        <div class="app-shell" style="width:100%;display:flex;background:rgba(15,35,56,0.96);border-top:1px solid rgba(127,179,211,0.15);backdrop-filter:blur(6px);">
           ${navHTML}
         </div>
       </div>
@@ -697,6 +697,7 @@ function renderApp() {
   document.querySelectorAll("[data-tab]").forEach(btn => {
     btn.onclick = () => {
       const tab = btn.dataset.tab;
+      hoursSearchActive = false;
       setState({ view: tab });
       if (tab === "admin") loadProfiles();
       if (tab === "hours") loadTimeEntries();
@@ -716,9 +717,11 @@ function renderApp() {
 
   const hoursSearchInput = document.getElementById("hoursSearchInput");
   if (hoursSearchInput) {
-    hoursSearchInput.oninput = (e) => { state.hoursSearch = e.target.value; render(); };
-    hoursSearchInput.focus();
-    hoursSearchInput.setSelectionRange(hoursSearchInput.value.length, hoursSearchInput.value.length);
+    hoursSearchInput.oninput = (e) => { hoursSearchActive = true; state.hoursSearch = e.target.value; render(); };
+    if (hoursSearchActive) {
+      hoursSearchInput.focus();
+      hoursSearchInput.setSelectionRange(hoursSearchInput.value.length, hoursSearchInput.value.length);
+    }
   }
 
   document.querySelectorAll("[data-checkin-id]").forEach(inp => {
@@ -742,6 +745,7 @@ function renderApp() {
 }
 
 let formState = { date: todayISO(), site: "", weather: "sun", workTypes: [], workers: "", description: "" };
+let hoursSearchActive = false;
 
 function formHTML() {
   const weatherBtns = WEATHER.map(([key,emoji]) => `
