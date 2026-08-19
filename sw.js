@@ -1,5 +1,9 @@
-const CACHE = "naryad-v1";
-const ASSETS = ["./", "./index.html", "./config.js", "./manifest.json", "./icons/icon-192.png", "./icons/icon-512.png"];
+const CACHE = "naryad-v2";
+const ASSETS = [
+  "./", "./index.html", "./config.js", "./manifest.json", "./icons/icon-192.png", "./icons/icon-512.png",
+  "./js/app.js", "./js/constants.js", "./js/i18n.js", "./js/helpers.js", "./js/supabaseClient.js",
+  "./js/state.js", "./js/auth.js", "./js/entries.js", "./js/timeEntries.js", "./js/profiles.js", "./js/render.js",
+];
 
 self.addEventListener("install", (e) => {
   e.waitUntil(caches.open(CACHE).then((c) => c.addAll(ASSETS)));
