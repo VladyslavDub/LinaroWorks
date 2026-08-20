@@ -1,46 +1,34 @@
 import { supabase } from "./supabaseClient.js";
-import { state, setState } from "./state.js";
-import { loadEntries } from "./entries.js";
-import { loadProjects } from "./projects.js";
+import { state, setState, displayName } from "./state.js";
 
-export async function initAuth() {
-  const { data: { session } } = await supabase.auth.getSession();
-  if (session) {
-    await loadProfile(session.user);
-  } else {
-    setState({ authChecked: true });
+export async function loadEntries() {
+  const { data, error } = await supabase.from("entries").select("*, projects(name)").order("date", { ascending:false }).order("created_at", { ascending:false });
+  if (error) {
+    console.error("Supabase error:", error);
+    setState({ error: "Не вдалося завантажити записи: " + error.message, loading: false });
+    return;
   }
-  supabase.auth.onAuthStateChange((_event, session) => {
-    if (session && session.user.id !== (state.user && state.user.id)) {
-      loadProfile(session.user);
-    } else if (!session) {
-      setState({ user: null, role: null, entries: [], authChecked: true, view: "today" });
-    }
-  });
+  setState({ entries: data, loading: false, error: null });
 }
 
-export async function loadProfile(user) {
-  const { data, error } = await supabase.from("profiles").select("role,email,full_name").eq("id", user.id).single();
-  if (error) console.error("Profile load error:", error);
-  setState({ user, role: (data && data.role) || "робітник", fullName: (data && data.full_name) || null, authChecked: true });
+export async function saveEntry(formData) {
+  setState({ saving: true, formError: null });
+  const { error } = await supabase.from("entries").insert([{ ...formData, author: displayName() }]);
+  if (error) {
+    setState({ saving: false, formError: "Не вдалося зберегти запис. Спробуйте ще раз." });
+    return;
+  }
+  setState({ saving: false, showForm: false });
   loadEntries();
-  loadProjects();
 }
 
-export async function signIn(email, password) {
-  setState({ authBusy: true, authError: null });
-  const { error } = await supabase.auth.signInWithPassword({ email, password });
-  if (error) { setState({ authBusy: false, authError: "Невірний email або пароль." }); return; }
-  setState({ authBusy: false });
+export async function deleteEntry(id) {
+  const { error } = await supabase.from("entries").delete().eq("id", id);
+  if (error) { alert("Не вдалося видалити запис: " + error.message); return; }
+  loadEntries();
 }
 
-export async function signUp(email, password, fullName) {
-  setState({ authBusy: true, authError: null });
-  const { error } = await supabase.auth.signUp({ email, password, options: { data: { full_name: fullName } } });
-  if (error) { setState({ authBusy: false, authError: error.message }); return; }
-  setState({ authBusy: false });
-}
-
-export async function signOut() {
-  await supabase.auth.signOut();
-}
+supabase.channel("entries-changes")
+  .on("postgres_changes", { event: "INSERT", schema: "public", table: "entries" }, () => { if (state.user) loadEntries(); })
+  .on("postgres_changes", { event: "DELETE", schema: "public", table: "entries" }, () => { if (state.user) loadEntries(); })
+  .subscribe();
