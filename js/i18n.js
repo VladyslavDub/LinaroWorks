@@ -81,6 +81,7 @@ const STRINGS = {
   noProjectFallback: ["без проєкту","bez projektu"],
   projectFieldOptional: ["Проєкт (необов'язково)","Projekt (nepovinné)"],
   noProjectOption: ["Без проєкту","Bez projektu"],
+  addEntryBtn: ["+ Додати запис","+ Přidat záznam"],
 };
 
 export let lang = localStorage.getItem("linaro-lang") || "uk";
