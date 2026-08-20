@@ -6,6 +6,7 @@ import { signIn, signUp, signOut } from "./auth.js";
 import { saveEntry, deleteEntry } from "./entries.js";
 import { addTimeEntry, updateTimeEntry, confirmTimeEntry, deleteTimeEntry, loadTimeEntries } from "./timeEntries.js";
 import { loadProfiles, setRole } from "./profiles.js";
+import { loadProjects, createProject, setProjectStatus, deleteProject } from "./projects.js";
 
 const root = document.getElementById("root");
 
@@ -88,14 +89,15 @@ function ticketHTML(e) {
   const dots = Array.from({length:16}).map(()=>`<div style="width:10px;height:10px;border-radius:9999px;background:${BG};"></div>`).join("");
   const chips = (e.work_types||[]).map(tp => `<span style="font-size:11px;padding:2px 10px;border-radius:9999px;background:rgba(242,100,48,0.12);color:#B84B22;border:1px solid rgba(242,100,48,0.3);">${esc(tt(WORK_TYPE_LABELS[tp] || [tp,tp]))}</span>`).join("");
   const deleteBtn = isForeman() ? `<button data-delete-id="${e.id}" style="margin-top:10px;width:100%;padding:7px 0;border-radius:8px;border:1px solid rgba(192,57,43,0.35);background:rgba(192,57,43,0.06);color:#C0392B;font-size:12px;">${t("deleteEntryBtn")}</button>` : "";
+  const projectLabel = (e.projects && e.projects.name) || e.site || t("noProjectFallback");
   return `
   <div style="position:relative;margin-top:16px;transform:rotate(${rot});">
     <div style="position:absolute;top:-5px;left:0;right:0;display:flex;justify-content:space-around;padding:0 12px;">${dots}</div>
     <div style="background:${CARD};color:${INK};border-radius:10px;padding:16px;box-shadow:0 6px 16px rgba(0,0,0,0.25);position:relative;overflow:hidden;">
       <div style="position:absolute;top:12px;right:-8px;padding:4px 12px;font-size:11px;font-weight:700;transform:rotate(7deg);border:1.5px solid ${ORANGE};color:${ORANGE};border-radius:4px;" class="font-mono">${fmtShort(e.date)}</div>
       <div style="padding-right:64px;">
-        <div class="font-mono" style="font-size:11px;text-transform:uppercase;letter-spacing:0.05em;opacity:0.5;margin-bottom:2px;">${t("fieldSite")}</div>
-        <div class="font-display" style="font-weight:600;font-size:15px;">${esc(e.site)}</div>
+        <div class="font-mono" style="font-size:11px;text-transform:uppercase;letter-spacing:0.05em;opacity:0.5;margin-bottom:2px;">${t("navProjects")}</div>
+        <div class="font-display" style="font-weight:600;font-size:15px;">${esc(projectLabel)}</div>
       </div>
       ${chips ? `<div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:12px;">${chips}</div>` : ""}
       <p style="font-size:13.5px;line-height:1.6;margin-top:12px;opacity:0.9;white-space:pre-wrap;">${esc(e.description)}</p>
@@ -255,6 +257,85 @@ function attachHoursFormHandlers() {
   };
 }
 
+function projectCardHTML(p) {
+  const isDone = p.status === "завершено";
+  const count = state.entries.filter(e => e.project_id === p.id).length;
+  return `
+  <div style="background:${CARD};color:${INK};border-radius:10px;padding:16px;margin-top:12px;opacity:${isDone ? 0.7 : 1};">
+    <div style="display:flex;align-items:start;justify-content:space-between;gap:10px;">
+      <div style="min-width:0;">
+        <div class="font-display" style="font-weight:600;font-size:15px;">${esc(p.name)}</div>
+        ${p.address ? `<div style="font-size:12px;opacity:0.6;margin-top:2px;">${esc(p.address)}</div>` : ""}
+        <div class="font-mono" style="font-size:11px;opacity:0.5;margin-top:6px;">${count} ${t("entriesCountLabel")}</div>
+      </div>
+      <span style="font-size:11px;padding:2px 9px;border-radius:9999px;flex-shrink:0;background:${isDone ? "rgba(107,114,128,0.15)" : "rgba(91,140,90,0.15)"};color:${isDone ? "#6B7280" : "#3F6B3E"};">${isDone ? t("statusDone") : t("statusActive")}</span>
+    </div>
+    ${isForeman() ? `
+    <div style="display:flex;gap:8px;margin-top:12px;">
+      <button data-project-toggle-id="${p.id}" data-project-toggle-status="${isDone ? "активний" : "завершено"}" style="flex:1;font-size:12px;padding:7px 0;border-radius:8px;border:1px solid rgba(127,179,211,0.35);background:rgba(127,179,211,0.08);color:${CYAN};">
+        ${isDone ? t("reopenProjectBtn") : t("closeProjectBtn")}
+      </button>
+      <button data-project-delete-id="${p.id}" style="font-size:12px;padding:7px 12px;border-radius:8px;border:1px solid rgba(192,57,43,0.35);background:rgba(192,57,43,0.06);color:#C0392B;">🗑</button>
+    </div>` : ""}
+  </div>`;
+}
+
+function projectsHTML() {
+  const addBtn = isForeman() ? `<button id="addProjectBtn" class="font-display" style="width:100%;padding:12px;border-radius:10px;background:${ORANGE};color:#fff;font-weight:600;letter-spacing:0.03em;border:none;font-size:13px;margin-bottom:4px;">${t("newProjectBtn")}</button>` : "";
+
+  const active = state.projects.filter(p => p.status === "активний");
+  const done = state.projects.filter(p => p.status === "завершено");
+
+  if (!state.projects.length) return addBtn + emptyStateHTML(t("emptyProjects"));
+
+  let html = addBtn;
+  html += `<div class="tickets-grid">${active.map(projectCardHTML).join("")}</div>`;
+  if (done.length) {
+    html += `<div style="margin-top:24px;">
+      <div class="font-mono" style="font-size:12px;text-transform:uppercase;color:${CYAN};opacity:0.6;">${t("doneProjectsTitle")}</div>
+      <div class="tickets-grid">${done.map(projectCardHTML).join("")}</div>
+    </div>`;
+  }
+  return html;
+}
+
+function projectFormHTML() {
+  return `
+  <div style="position:fixed;inset:0;z-index:50;display:flex;align-items:flex-end;justify-content:center;">
+    <div id="projectBackdrop" style="position:absolute;inset:0;background:rgba(0,0,0,0.55);"></div>
+    <div style="position:relative;width:100%;max-width:448px;border-radius:16px 16px 0 0;padding:20px;padding-bottom:32px;background:${CARD};color:${INK};">
+      <div style="width:40px;height:4px;border-radius:9999px;background:rgba(0,0,0,0.15);margin:0 auto 16px;"></div>
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">
+        <h2 class="font-display" style="font-size:18px;font-weight:600;">${t("newProjectTitle")}</h2>
+        <button id="closeProjectForm" style="background:none;border:none;font-size:18px;opacity:0.5;">✕</button>
+      </div>
+
+      <label class="font-mono" style="display:block;font-size:11px;text-transform:uppercase;opacity:0.5;margin-bottom:4px;">${t("fieldProjectName")}</label>
+      <input id="pName" type="text" placeholder="${t("projectNamePh")}" style="width:100%;margin-bottom:16px;padding:10px 12px;border-radius:8px;border:1px solid rgba(26,26,24,0.15);font-size:14px;box-sizing:border-box;" />
+
+      <label class="font-mono" style="display:block;font-size:11px;text-transform:uppercase;opacity:0.5;margin-bottom:4px;">${t("fieldProjectAddress")}</label>
+      <input id="pAddress" type="text" placeholder="${t("projectAddressPh")}" style="width:100%;margin-bottom:8px;padding:10px 12px;border-radius:8px;border:1px solid rgba(26,26,24,0.15);font-size:14px;box-sizing:border-box;" />
+
+      ${state.projectFormError ? `<div style="color:#C0392B;font-size:12px;margin:8px 0 12px;">${esc(state.projectFormError)}</div>` : ""}
+
+      <button id="projectSaveBtn" class="font-display" ${state.projectSaving ? "disabled" : ""} style="width:100%;padding:12px;border-radius:8px;background:${ORANGE};color:#fff;font-weight:600;letter-spacing:0.03em;border:none;font-size:14px;margin-top:8px;opacity:${state.projectSaving?0.6:1};">
+        ${state.projectSaving ? t("savingBtn") : t("saveEntryBtn")}
+      </button>
+    </div>
+  </div>`;
+}
+
+function attachProjectFormHandlers() {
+  document.getElementById("projectBackdrop").onclick = () => setState({ showProjectForm: false });
+  document.getElementById("closeProjectForm").onclick = () => setState({ showProjectForm: false });
+  document.getElementById("projectSaveBtn").onclick = () => {
+    const name = document.getElementById("pName").value.trim();
+    const address = document.getElementById("pAddress").value.trim();
+    if (!name) { setState({ projectFormError: t("fillProjectName") }); return; }
+    createProject({ name, address: address || null });
+  };
+}
+
 function adminHTML() {
   if (!state.profiles.length) return emptyStateHTML(t("loadingPeople"));
   const rows = state.profiles.map(p => {
@@ -295,6 +376,8 @@ function renderApp() {
           </div>
           <div class="tickets-grid">${groups[date].map(ticketHTML).join("")}</div>
         </div>`).join("");
+  } else if (state.view === "projects") {
+    contentHTML = projectsHTML();
   } else if (state.view === "hours") {
     contentHTML = hoursHTML();
   } else if (state.view === "admin") {
@@ -302,6 +385,7 @@ function renderApp() {
   }
 
   const navItems = [
+    ["projects", "🏗️", t("navProjects")],
     ["today", "📋", t("navToday")],
     ["journal", "📖", t("navJournal")],
     ["hours", "⏱️", t("navHours")],
@@ -350,6 +434,7 @@ function renderApp() {
 
       ${state.showForm ? formHTML() : ""}
       ${state.showHoursForm ? hoursFormHTML() : ""}
+      ${state.showProjectForm ? projectFormHTML() : ""}
     </div>
   </div>`;
 
@@ -367,6 +452,7 @@ function renderApp() {
       setState({ view: tab });
       if (tab === "admin") loadProfiles();
       if (tab === "hours") loadTimeEntries();
+      if (tab === "projects") loadProjects();
     };
   });
 
@@ -406,14 +492,42 @@ function renderApp() {
     btn.onclick = () => { if (confirm(t("confirmDeleteHours"))) deleteTimeEntry(Number(btn.dataset.deletehoursId)); };
   });
 
+  const addProjectBtn = document.getElementById("addProjectBtn");
+  if (addProjectBtn) addProjectBtn.onclick = () => setState({ showProjectForm: true, projectFormError: null });
+
+  document.querySelectorAll("[data-project-toggle-id]").forEach(btn => {
+    btn.onclick = () => setProjectStatus(Number(btn.dataset.projectToggleId), btn.dataset.projectToggleStatus);
+  });
+  document.querySelectorAll("[data-project-delete-id]").forEach(btn => {
+    btn.onclick = () => { if (confirm(t("confirmDeleteProject"))) deleteProject(Number(btn.dataset.projectDeleteId)); };
+  });
+
   if (state.showForm) attachFormHandlers();
   if (state.showHoursForm) attachHoursFormHandlers();
+  if (state.showProjectForm) attachProjectFormHandlers();
 }
 
-let formState = { date: todayISO(), site: "", weather: "sun", workTypes: [], workers: "", description: "" };
+let formState = { date: todayISO(), projectId: null, weather: "sun", workTypes: [], workers: "", description: "" };
 let hoursSearchActive = false;
 
 function formHTML() {
+  const activeProjects = state.projects.filter(p => p.status === "активний");
+
+  if (!activeProjects.length) {
+    return `
+    <div style="position:fixed;inset:0;z-index:50;display:flex;align-items:flex-end;justify-content:center;">
+      <div id="backdrop" style="position:absolute;inset:0;background:rgba(0,0,0,0.55);"></div>
+      <div style="position:relative;width:100%;max-width:448px;border-radius:16px 16px 0 0;padding:20px;padding-bottom:32px;background:${CARD};color:${INK};text-align:center;">
+        <div style="width:40px;height:4px;border-radius:9999px;background:rgba(0,0,0,0.15);margin:0 auto 16px;"></div>
+        <p style="font-size:14px;opacity:0.8;margin-bottom:16px;">${t("needActiveProject")}</p>
+        <button id="goToProjectsBtn" class="font-display" style="width:100%;padding:12px;border-radius:8px;background:${ORANGE};color:#fff;font-weight:600;letter-spacing:0.03em;border:none;font-size:14px;">${t("newProjectBtn")}</button>
+        <button id="closeForm" style="width:100%;margin-top:10px;background:none;border:none;color:${INK};opacity:0.5;font-size:13px;padding:8px;">✕</button>
+      </div>
+    </div>`;
+  }
+
+  const projectOptions = activeProjects.map(p => `<option value="${p.id}" ${formState.projectId === p.id ? "selected" : ""}>${esc(p.name)}</option>`).join("");
+
   const weatherBtns = WEATHER.map(([key,emoji]) => `
     <button data-weather="${key}" style="flex:1 1 64px;min-width:64px;padding:10px 0;border-radius:8px;border:1px solid ${formState.weather===key?ORANGE:'rgba(26,26,24,0.15)'};background:${formState.weather===key?'rgba(242,100,48,0.1)':'transparent'};display:flex;flex-direction:column;align-items:center;gap:2px;">
       <span style="font-size:16px;">${emoji}</span><span style="font-size:10px;opacity:${formState.weather===key?1:0.6};color:${INK};">${esc(tt(WEATHER_LABELS[key]))}</span>
@@ -435,8 +549,8 @@ function formHTML() {
       <label class="font-mono" style="display:block;font-size:11px;text-transform:uppercase;opacity:0.5;margin-bottom:4px;">${t("fieldDate")}</label>
       <input id="fDate" type="date" value="${formState.date}" max="${todayISO()}" class="font-mono" style="width:100%;margin-bottom:16px;padding:10px 12px;border-radius:8px;border:1px solid rgba(26,26,24,0.15);font-size:14px;box-sizing:border-box;" />
 
-      <label class="font-mono" style="display:block;font-size:11px;text-transform:uppercase;opacity:0.5;margin-bottom:4px;">${t("fieldSite")}</label>
-      <input id="fSite" type="text" value="${esc(formState.site)}" placeholder="${t("sitePh")}" style="width:100%;margin-bottom:16px;padding:10px 12px;border-radius:8px;border:1px solid rgba(26,26,24,0.15);font-size:14px;box-sizing:border-box;" />
+      <label class="font-mono" style="display:block;font-size:11px;text-transform:uppercase;opacity:0.5;margin-bottom:4px;">${t("navProjects")}</label>
+      <select id="fProject" style="width:100%;margin-bottom:16px;padding:10px 12px;border-radius:8px;border:1px solid rgba(26,26,24,0.15);font-size:14px;box-sizing:border-box;background:#fff;">${projectOptions}</select>
 
       <label class="font-mono" style="display:block;font-size:11px;text-transform:uppercase;opacity:0.5;margin-bottom:8px;">${t("fieldWeather")}</label>
       <div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:16px;">${weatherBtns}</div>
@@ -463,10 +577,21 @@ function attachFormHandlers() {
   document.getElementById("backdrop").onclick = () => setState({ showForm: false });
   document.getElementById("closeForm").onclick = () => setState({ showForm: false });
 
+  const goToProjects = document.getElementById("goToProjectsBtn");
+  if (goToProjects) {
+    goToProjects.onclick = () => setState({ showForm: false, view: "projects", showProjectForm: true, projectFormError: null });
+    return; // немає активних проєктів — інших полів форми не існує
+  }
+
   document.getElementById("fDate").onchange = (e) => formState.date = e.target.value;
-  document.getElementById("fSite").oninput = (e) => formState.site = e.target.value;
+  document.getElementById("fProject").onchange = (e) => formState.projectId = Number(e.target.value);
   document.getElementById("fWorkers").oninput = (e) => formState.workers = e.target.value;
   document.getElementById("fDesc").oninput = (e) => formState.description = e.target.value;
+
+  if (formState.projectId === null) {
+    const sel = document.getElementById("fProject");
+    formState.projectId = Number(sel.value);
+  }
 
   document.querySelectorAll("[data-weather]").forEach(btn => {
     btn.onclick = () => { formState.weather = btn.dataset.weather; render(); };
@@ -480,15 +605,15 @@ function attachFormHandlers() {
   });
 
   document.getElementById("saveBtn").onclick = () => {
-    if (!formState.site.trim() || !formState.description.trim()) { setState({ formError: t("fillRequired") }); return; }
+    if (!formState.projectId || !formState.description.trim()) { setState({ formError: t("fillRequired") }); return; }
     saveEntry({
       date: formState.date,
-      site: formState.site.trim(),
+      project_id: formState.projectId,
       weather: formState.weather,
       work_types: formState.workTypes,
       workers: formState.workers.trim(),
       description: formState.description.trim(),
     });
-    formState = { date: todayISO(), site: "", weather: "sun", workTypes: [], workers: "", description: "" };
+    formState = { date: todayISO(), projectId: null, weather: "sun", workTypes: [], workers: "", description: "" };
   };
 }
