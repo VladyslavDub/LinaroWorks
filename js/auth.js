@@ -1,6 +1,7 @@
 import { supabase } from "./supabaseClient.js";
 import { state, setState } from "./state.js";
 import { loadEntries } from "./entries.js";
+import { loadProjects } from "./projects.js";
 
 export async function initAuth() {
   const { data: { session } } = await supabase.auth.getSession();
@@ -23,6 +24,7 @@ export async function loadProfile(user) {
   if (error) console.error("Profile load error:", error);
   setState({ user, role: (data && data.role) || "робітник", fullName: (data && data.full_name) || null, authChecked: true });
   loadEntries();
+  loadProjects();
 }
 
 export async function signIn(email, password) {
