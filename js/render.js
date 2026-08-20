@@ -261,7 +261,7 @@ function projectCardHTML(p) {
   const isDone = p.status === "завершено";
   const count = state.entries.filter(e => e.project_id === p.id).length;
   return `
-  <div style="background:${CARD};color:${INK};border-radius:10px;padding:16px;margin-top:12px;opacity:${isDone ? 0.7 : 1};">
+  <div data-project-open-id="${p.id}" style="background:${CARD};color:${INK};border-radius:10px;padding:16px;margin-top:12px;opacity:${isDone ? 0.7 : 1};cursor:pointer;">
     <div style="display:flex;align-items:start;justify-content:space-between;gap:10px;">
       <div style="min-width:0;">
         <div class="font-display" style="font-weight:600;font-size:15px;">${esc(p.name)}</div>
@@ -280,7 +280,40 @@ function projectCardHTML(p) {
   </div>`;
 }
 
+function projectDetailHTML(project) {
+  const entries = state.entries
+    .filter(e => e.project_id === project.id)
+    .sort((a,b) => a.date < b.date ? 1 : -1);
+  const isDone = project.status === "завершено";
+
+  const backBtn = `<button id="backToProjectsBtn" style="background:none;border:none;color:${CYAN};font-size:13px;padding:4px 0;margin-bottom:12px;">${t("backToProjects")}</button>`;
+
+  const header = `
+    <div style="background:${CARD};color:${INK};border-radius:10px;padding:16px;">
+      <div style="display:flex;align-items:start;justify-content:space-between;gap:10px;">
+        <div>
+          <div class="font-display" style="font-weight:600;font-size:17px;">${esc(project.name)}</div>
+          ${project.address ? `<div style="font-size:12px;opacity:0.6;margin-top:2px;">${esc(project.address)}</div>` : ""}
+        </div>
+        <span style="font-size:11px;padding:2px 9px;border-radius:9999px;flex-shrink:0;background:${isDone ? "rgba(107,114,128,0.15)" : "rgba(91,140,90,0.15)"};color:${isDone ? "#6B7280" : "#3F6B3E"};">${isDone ? t("statusDone") : t("statusActive")}</span>
+      </div>
+    </div>`;
+
+  const addBtn = (isForeman() && !isDone) ? `<button id="addEntryInProjectBtn" class="font-display" style="width:100%;padding:12px;border-radius:10px;background:${ORANGE};color:#fff;font-weight:600;letter-spacing:0.03em;border:none;font-size:13px;margin-top:14px;">${t("addEntryBtn")}</button>` : "";
+
+  const list = entries.length
+    ? `<div class="tickets-grid">${entries.map(ticketHTML).join("")}</div>`
+    : emptyStateHTML(t("emptyJournal"));
+
+  return backBtn + header + addBtn + `<div style="margin-top:4px;">${list}</div>`;
+}
+
 function projectsHTML() {
+  if (state.openProjectId) {
+    const project = state.projects.find(p => p.id === state.openProjectId);
+    if (project) return projectDetailHTML(project);
+  }
+
   const addBtn = isForeman() ? `<button id="addProjectBtn" class="font-display" style="width:100%;padding:12px;border-radius:10px;background:${ORANGE};color:#fff;font-weight:600;letter-spacing:0.03em;border:none;font-size:13px;margin-bottom:4px;">${t("newProjectBtn")}</button>` : "";
 
   const active = state.projects.filter(p => p.status === "активний");
@@ -357,25 +390,12 @@ function adminHTML() {
 
 function renderApp() {
   const todayEntries = state.entries.filter(e => e.date === todayISO());
-  const groups = {};
-  state.entries.forEach(e => { (groups[e.date] = groups[e.date] || []).push(e); });
-  const groupedDates = Object.keys(groups).sort((a,b) => a < b ? 1 : -1);
 
   let contentHTML = "";
   if (state.view === "today") {
     contentHTML = todayEntries.length === 0
       ? emptyStateHTML(t("emptyToday"))
       : `<div class="tickets-grid">${todayEntries.map(ticketHTML).join("")}</div>`;
-  } else if (state.view === "journal") {
-    contentHTML = groupedDates.length === 0
-      ? emptyStateHTML(t("emptyJournal"))
-      : groupedDates.map(date => `
-        <div style="margin-top:24px;">
-          <div class="font-mono" style="font-size:12px;text-transform:uppercase;color:${CYAN};opacity:0.8;">
-            ${fmtLong(date)} <span style="opacity:0.5;">· ${groups[date].length}</span>
-          </div>
-          <div class="tickets-grid">${groups[date].map(ticketHTML).join("")}</div>
-        </div>`).join("");
   } else if (state.view === "projects") {
     contentHTML = projectsHTML();
   } else if (state.view === "hours") {
@@ -385,9 +405,8 @@ function renderApp() {
   }
 
   const navItems = [
-    ["projects", "🏗️", t("navProjects")],
     ["today", "📋", t("navToday")],
-    ["journal", "📖", t("navJournal")],
+    ["projects", "🏗️", t("navProjects")],
     ["hours", "⏱️", t("navHours")],
   ];
   if (isForeman()) navItems.push(["admin", "🧑‍🤝‍🧑", t("navPeople")]);
@@ -424,7 +443,7 @@ function renderApp() {
 
       <div class="content-safe" style="flex:1;padding:0 20px;">${contentHTML}</div>
 
-      ${isForeman() && (state.view === "today" || state.view === "journal") ? `<button id="fabBtn" class="fab-safe" style="position:absolute;z-index:30;border-radius:9999px;background:${ORANGE};width:56px;height:56px;right:20px;box-shadow:0 8px 20px rgba(0,0,0,0.35);border:none;color:#fff;font-size:26px;">+</button>` : ""}
+      ${isForeman() && state.view === "today" ? `<button id="fabBtn" class="fab-safe" style="position:absolute;z-index:30;border-radius:9999px;background:${ORANGE};width:56px;height:56px;right:20px;box-shadow:0 8px 20px rgba(0,0,0,0.35);border:none;color:#fff;font-size:26px;">+</button>` : ""}
 
       <div style="position:fixed;bottom:0;left:0;right:0;z-index:20;display:flex;justify-content:center;">
         <div class="app-shell safe-bottom" style="width:100%;display:flex;flex-wrap:wrap;background:rgba(15,35,56,0.96);border-top:1px solid rgba(127,179,211,0.15);backdrop-filter:blur(6px);">
@@ -441,7 +460,7 @@ function renderApp() {
   attachLangToggle();
 
   const fab = document.getElementById("fabBtn");
-  if (fab) fab.onclick = () => setState({ showForm: true, formError: null });
+  if (fab) fab.onclick = () => { formLockedProjectId = null; setState({ showForm: true, formError: null }); };
 
   document.getElementById("signOutBtn").onclick = signOut;
 
@@ -449,7 +468,7 @@ function renderApp() {
     btn.onclick = () => {
       const tab = btn.dataset.tab;
       hoursSearchActive = false;
-      setState({ view: tab });
+      setState({ view: tab, openProjectId: null });
       if (tab === "admin") loadProfiles();
       if (tab === "hours") loadTimeEntries();
       if (tab === "projects") loadProjects();
@@ -495,12 +514,30 @@ function renderApp() {
   const addProjectBtn = document.getElementById("addProjectBtn");
   if (addProjectBtn) addProjectBtn.onclick = () => setState({ showProjectForm: true, projectFormError: null });
 
+  document.querySelectorAll("[data-project-open-id]").forEach(card => {
+    card.onclick = () => setState({ openProjectId: Number(card.dataset.projectOpenId) });
+  });
   document.querySelectorAll("[data-project-toggle-id]").forEach(btn => {
-    btn.onclick = () => setProjectStatus(Number(btn.dataset.projectToggleId), btn.dataset.projectToggleStatus);
+    btn.onclick = (ev) => { ev.stopPropagation(); setProjectStatus(Number(btn.dataset.projectToggleId), btn.dataset.projectToggleStatus); };
   });
   document.querySelectorAll("[data-project-delete-id]").forEach(btn => {
-    btn.onclick = () => { if (confirm(t("confirmDeleteProject"))) deleteProject(Number(btn.dataset.projectDeleteId)); };
+    btn.onclick = (ev) => {
+      ev.stopPropagation();
+      if (confirm(t("confirmDeleteProject"))) deleteProject(Number(btn.dataset.projectDeleteId));
+    };
   });
+
+  const backToProjectsBtn = document.getElementById("backToProjectsBtn");
+  if (backToProjectsBtn) backToProjectsBtn.onclick = () => setState({ openProjectId: null });
+
+  const addEntryInProjectBtn = document.getElementById("addEntryInProjectBtn");
+  if (addEntryInProjectBtn) {
+    addEntryInProjectBtn.onclick = () => {
+      formLockedProjectId = state.openProjectId;
+      formState.projectId = state.openProjectId;
+      setState({ showForm: true, formError: null });
+    };
+  }
 
   if (state.showForm) attachFormHandlers();
   if (state.showHoursForm) attachHoursFormHandlers();
@@ -508,12 +545,14 @@ function renderApp() {
 }
 
 let formState = { date: todayISO(), projectId: null, weather: "sun", workTypes: [], workers: "", description: "" };
+let formLockedProjectId = null;
 let hoursSearchActive = false;
 
 function formHTML() {
+  const lockedProject = formLockedProjectId ? state.projects.find(p => p.id === formLockedProjectId) : null;
   const activeProjects = state.projects.filter(p => p.status === "активний");
 
-  if (!activeProjects.length) {
+  if (!lockedProject && !activeProjects.length) {
     return `
     <div style="position:fixed;inset:0;z-index:50;display:flex;align-items:flex-end;justify-content:center;">
       <div id="backdrop" style="position:absolute;inset:0;background:rgba(0,0,0,0.55);"></div>
@@ -526,7 +565,9 @@ function formHTML() {
     </div>`;
   }
 
-  const projectOptions = activeProjects.map(p => `<option value="${p.id}" ${formState.projectId === p.id ? "selected" : ""}>${esc(p.name)}</option>`).join("");
+  const projectField = lockedProject
+    ? `<div style="width:100%;margin-bottom:16px;padding:10px 12px;border-radius:8px;background:rgba(242,100,48,0.08);border:1px solid rgba(242,100,48,0.25);font-size:14px;font-weight:600;box-sizing:border-box;">${esc(lockedProject.name)}</div>`
+    : `<select id="fProject" style="width:100%;margin-bottom:16px;padding:10px 12px;border-radius:8px;border:1px solid rgba(26,26,24,0.15);font-size:14px;box-sizing:border-box;background:#fff;">${activeProjects.map(p => `<option value="${p.id}" ${formState.projectId === p.id ? "selected" : ""}>${esc(p.name)}</option>`).join("")}</select>`;
 
   const weatherBtns = WEATHER.map(([key,emoji]) => `
     <button data-weather="${key}" style="flex:1 1 64px;min-width:64px;padding:10px 0;border-radius:8px;border:1px solid ${formState.weather===key?ORANGE:'rgba(26,26,24,0.15)'};background:${formState.weather===key?'rgba(242,100,48,0.1)':'transparent'};display:flex;flex-direction:column;align-items:center;gap:2px;">
@@ -550,7 +591,7 @@ function formHTML() {
       <input id="fDate" type="date" value="${formState.date}" max="${todayISO()}" class="font-mono" style="width:100%;margin-bottom:16px;padding:10px 12px;border-radius:8px;border:1px solid rgba(26,26,24,0.15);font-size:14px;box-sizing:border-box;" />
 
       <label class="font-mono" style="display:block;font-size:11px;text-transform:uppercase;opacity:0.5;margin-bottom:4px;">${t("navProjects")}</label>
-      <select id="fProject" style="width:100%;margin-bottom:16px;padding:10px 12px;border-radius:8px;border:1px solid rgba(26,26,24,0.15);font-size:14px;box-sizing:border-box;background:#fff;">${projectOptions}</select>
+      ${projectField}
 
       <label class="font-mono" style="display:block;font-size:11px;text-transform:uppercase;opacity:0.5;margin-bottom:8px;">${t("fieldWeather")}</label>
       <div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:16px;">${weatherBtns}</div>
@@ -584,14 +625,13 @@ function attachFormHandlers() {
   }
 
   document.getElementById("fDate").onchange = (e) => formState.date = e.target.value;
-  document.getElementById("fProject").onchange = (e) => formState.projectId = Number(e.target.value);
+  const fProject = document.getElementById("fProject");
+  if (fProject) {
+    fProject.onchange = (e) => formState.projectId = Number(e.target.value);
+    if (formState.projectId === null) formState.projectId = Number(fProject.value);
+  }
   document.getElementById("fWorkers").oninput = (e) => formState.workers = e.target.value;
   document.getElementById("fDesc").oninput = (e) => formState.description = e.target.value;
-
-  if (formState.projectId === null) {
-    const sel = document.getElementById("fProject");
-    formState.projectId = Number(sel.value);
-  }
 
   document.querySelectorAll("[data-weather]").forEach(btn => {
     btn.onclick = () => { formState.weather = btn.dataset.weather; render(); };
