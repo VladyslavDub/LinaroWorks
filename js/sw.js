@@ -1,4 +1,4 @@
-const CACHE = "naryad-v2";
+const CACHE = "naryad-v3";
 const ASSETS = [
   "./", "./index.html", "./config.js", "./manifest.json", "./icons/icon-192.png", "./icons/icon-512.png",
   "./js/app.js", "./js/constants.js", "./js/i18n.js", "./js/helpers.js", "./js/supabaseClient.js",
