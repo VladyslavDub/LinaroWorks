@@ -11,6 +11,7 @@ export let state = {
   timeEntries: [],
   projects: [],
   selectedProjectId: null,
+  openProjectId: null,
   showProjectForm: false,
   projectSaving: false,
   projectFormError: null,
